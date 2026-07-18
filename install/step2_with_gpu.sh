@@ -1,16 +1,15 @@
 #!/bin/bash
 # ============================================================
-#  Step 2 [with GPU] —— 挂卡后入口：按顺序跑完下面这些需要GPU/nvcc的脚本。
-#  跑完再进 Step 3（hardware/、workload/ 下的正式基准测试）。
+#  Step 2 [with GPU] —— 挂卡后入口：只做真正需要GPU在场的验证。
+#  flash-attn的编译已经挪到 Step 1（编译本身不需要GPU，只需要nvcc，
+#  2026-07-18 在 fj01 上验证过：无卡阶段照样能正常编译成功）。
+#  跑完这一步再进 Step 3（hardware/、workload/ 下的正式基准测试）。
 # ============================================================
 set -e
 cd "$(dirname "${BASH_SOURCE[0]}")"
 source ./sources.sh
 
-echo "===== [1/2] install_flash_attn.sh ====="
-bash install_flash_attn.sh
-
-echo "===== [2/2] verify_gpu_environment.sh ====="
+echo "===== verify_gpu_environment.sh ====="
 bash verify_gpu_environment.sh
 
 echo

@@ -11,21 +11,23 @@
 
 | 步骤 | 需要GPU？ | 入口脚本 | 做什么 |
 |---|---|---|---|
-| Step 1 | wo GPU | `install/step1_wo_gpu.sh` | 下载模型/数据集/JustRL代码 + 装torch/transformers/vllm/unsloth等python依赖 |
-| Step 2 | with GPU | `install/step2_with_gpu.sh` | 装flash-attn(需要nvcc) + 快速验证模型能加载 |
+| Step 1 | wo GPU | `install/step1_wo_gpu.sh` | 下载模型/数据集/JustRL代码 + 装torch/transformers/vllm/unsloth等python依赖 + 装CUDA Toolkit(nvcc) + 编译flash-attn |
+| Step 2 | with GPU | `install/step2_with_gpu.sh` | 快速验证模型能加载+LoRA能包装 |
 | Step 3 | with GPU | `hardware/*.sh` + `workload/*.py` | 正式基准测试：硬件跑分 + GRPO训练/推理耗时+显存+吞吐 |
 
 Step 1 建议在**无卡（CPU-only）启动**阶段做完——下载是纯IO，装python依赖包也只是解析
 依赖+下载wheel，都不需要真实GPU，无卡启动通常比挂卡便宜很多。挂卡开始计费后直接从
 Step 2 开始，省下来的无卡等待时间就是省下来的钱。
 
-Step 2 里的 flash-attn 是唯一一个"编译时需要nvcc"的包——它没有匹配当前
-torch/cuda/python组合的预编译wheel时会尝试从源码编译。**装nvcc本身不需要GPU在场**
-（只是解压安装文件），所以 Step 1 默认会顺带把 CUDA Toolkit 装到持久化数据盘
-（`install/download_cuda_toolkit.sh`，默认开启，`INSTALL_CUDA_TOOLKIT=0`可跳过），
-装到 `$DATA_DIR/cuda-toolkit` 而不是根分区默认的 `/usr/local/cuda`——这样nvcc能
-**跨容器重置持续存活**，不用每次重装都重新下载5.4GB的安装包。Step 2 的
-flash-attn安装会自动探测到这个持久化nvcc并使用它（`sources.sh`里自动接进`PATH`/`CUDA_HOME`）。
+**flash-attn 也已经挪进了 Step 1**——它没有匹配当前torch/cuda/python组合的预编译
+wheel，需要从源码编译，但**编译本身只是把源码翻译成目标架构的机器码，不需要GPU
+硬件在场**（跟装nvcc一样，只是"CPU上跑编译器"这个动作），2026-07-18 在 fj01 上
+验证过：无卡阶段一样能正常编译成功。为了让编译能进行，Step 1 会先把 CUDA Toolkit
+装到持久化数据盘（`install/download_cuda_toolkit.sh`，默认开启，
+`INSTALL_CUDA_TOOLKIT=0`可跳过），装到 `$DATA_DIR/cuda-toolkit` 而不是根分区默认的
+`/usr/local/cuda`——这样nvcc能**跨容器重置持续存活**，不用每次重装都重新下载5.4GB
+的安装包（`sources.sh`会自动探测并接进`PATH`/`CUDA_HOME`）。Step 2 因此只剩下一件
+事——真正需要GPU硬件在场的模型加载验证。
 
 ## ⚠️ 数据保存位置：`/root/rivermind-data`
 
@@ -41,12 +43,12 @@ flash-attn安装会自动探测到这个持久化nvcc并使用它（`sources.sh`
 benchmark_scripts/
 ├── install/
 │   ├── sources.sh                   # 统一分发源配置(PyPI镜像/HF_ENDPOINT/GitHub代理/ModelScope优先/CUDA_HOME自动探测)，被其他脚本source
-│   ├── step1_wo_gpu.sh               # [wo GPU] 入口：顺序调用下面三个脚本
+│   ├── step1_wo_gpu.sh               # [wo GPU] 入口：顺序调用下面四个脚本
 │   │   ├── download_data_and_code.sh #   下载base模型/数据集/JustRL代码
 │   │   ├── install_python_deps.sh    #   装torch/transformers/vllm/unsloth等（flash-attn除外）
-│   │   └── download_cuda_toolkit.sh  #   下载+装nvcc到持久化数据盘（默认开启，装文件本身不需要GPU）
-│   └── step2_with_gpu.sh             # [with GPU] 入口：顺序调用下面两个脚本
-│       ├── install_flash_attn.sh     #   装flash-attn（用Step1装好的持久化nvcc编译）
+│   │   ├── download_cuda_toolkit.sh  #   下载+装nvcc到持久化数据盘（默认开启，装文件本身不需要GPU）
+│   │   └── install_flash_attn.sh     #   编译flash-attn（编译本身不需要GPU，只需要nvcc）
+│   └── step2_with_gpu.sh             # [with GPU] 入口：只做真正需要GPU在场的事
 │       └── verify_gpu_environment.sh #   快速验证模型能加载+LoRA能包装
 ├── hardware/                         # Step 3，需要挂卡
 │   ├── run_gpu_burn.sh               # Tensor Core 算力压测
@@ -72,12 +74,12 @@ benchmark_scripts/
 ```bash
 export DATA_DIR="/root/rivermind-data"
 
-# ===== Step 1 [wo GPU]：无卡阶段做完，省钱 =====
+# ===== Step 1 [wo GPU]：无卡阶段做完，省钱（含数据/依赖/nvcc/flash-attn编译） =====
 bash install/step1_wo_gpu.sh
 
 # ===== 挂卡，开始计费 =====
 
-# ===== Step 2 [with GPU] =====
+# ===== Step 2 [with GPU]：只做真正需要GPU的验证 =====
 export MODEL_PATH="/root/rivermind-data/models/DeepSeek-R1-Distill-Qwen-1.5B"
 bash install/step2_with_gpu.sh
 

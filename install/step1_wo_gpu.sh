@@ -12,8 +12,11 @@ bash download_data_and_code.sh
 echo "===== [2/3] install_python_deps.sh ====="
 bash install_python_deps.sh
 
-echo "===== [3/3] download_cuda_toolkit.sh（默认装nvcc，INSTALL_CUDA_TOOLKIT=0 可跳过） ====="
+echo "===== [3/4] download_cuda_toolkit.sh（默认装nvcc，INSTALL_CUDA_TOOLKIT=0 可跳过） ====="
 bash download_cuda_toolkit.sh
+
+echo "===== [4/4] install_flash_attn.sh（编译本身只需要nvcc，不需要GPU在场，跟Step1其他步骤一样） ====="
+bash install_flash_attn.sh
 
 echo
 echo "========== Step 1 [wo GPU] 全部完成 =========="

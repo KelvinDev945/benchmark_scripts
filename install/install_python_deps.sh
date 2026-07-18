@@ -12,15 +12,18 @@ fi
 if [ "$IS_T4" = true ]; then
     VLLM_PKG="vllm==0.9.2"; TRITON_PKG="triton==3.2.0"
 else
-    VLLM_PKG="vllm==0.19.1"; TRITON_PKG="triton"
+    # vllm==0.19.1（之前验证过的版本）实际硬性要求 torch==2.10.0（不是范围，是精确
+    # 版本锁定），跟下面torch锁定在2.8.x这个新约束直接冲突。改用vllm==0.11.0——
+    # 2026-07-18在fj01上用dry-run验证过：torch2.8.x + transformers<=5.5.0 +
+    # unsloth==2026.7.3 + vllm==0.11.0 能干净解析，没有回退到荒谬古董版本的问题。
+    VLLM_PKG="vllm==0.11.0"; TRITON_PKG="triton"
 fi
 # unsloth 同理需要钉死具体版本，不能留空——2026-07-18 在 fj01 上踩过坑：当基础镜像没有
 # 预装满足约束的torch时（见下面SKIP_TORCH_REINSTALL逻辑），uv要真正resolve torch，
-# 一旦torch被约束在<2.11.0，而vllm/unsloth不带版本号，解析器为了同时满足所有约束，
+# 一旦torch被约束在某个范围内，而vllm/unsloth不带版本号，解析器为了同时满足所有约束，
 # 会一路回退到离谱的古董版本（实测碰到过 vllm==0.2.5，2023年的版本，跟现在这套依赖完全
 # 不兼容，装的时候尝试从源码编译直接崩溃；unsloth不带版本号时也回退到了2024.8）。
-# 这里钉死到实测在这台机器上跑通过的组合（torch 2.10.0 + transformers 4.57.6 +
-# vllm 0.19.1 + unsloth 2026.7.3），阻止解析器做这种荒谬的回退。
+# 这里钉死到实测能干净解析的组合，阻止解析器做这种荒谬的回退。
 UNSLOTH_PKG="unsloth==2026.7.3"
 
 # torch 目标锁定在 2.8.x（而不是Unsloth约束允许的整个<2.11.0区间）——原因：

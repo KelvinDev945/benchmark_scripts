@@ -6,13 +6,16 @@ set -e
 DATA_DIR="${DATA_DIR:-/root/rivermind-data}"
 mkdir -p "$DATA_DIR/models" "$DATA_DIR/datasets"
 
-echo '=== 0. 检查/装好 modelscope + huggingface_hub（下载模型/数据集要用） ==='
+echo '=== 0. 确保 uv 可用（有些精简镜像连 pip 都没有，不能假设 pip 已存在） ==='
+if ! command -v uv >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh 2>&1 | tail -5
+    export PATH="$HOME/.local/bin:$PATH"
+    grep -q '.local/bin' ~/.bashrc 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+fi
+
+echo '=== 0b. 检查/装好 modelscope + huggingface_hub（下载模型/数据集要用） ==='
 if ! python3 -c "import modelscope" >/dev/null 2>&1; then
-    if command -v uv >/dev/null 2>&1; then
-        uv pip install --system -qqq modelscope huggingface_hub
-    else
-        pip install -qqq modelscope huggingface_hub
-    fi
+    uv pip install --system -qqq modelscope huggingface_hub
 fi
 
 echo '=== 1. 禁用 HF 新版 xet 存储后端（部分 hf-mirror 节点转发会401，详见环境文档） ==='

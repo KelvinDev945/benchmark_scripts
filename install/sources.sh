@@ -28,15 +28,29 @@ export GITHUB_PROXY_PREFIX="${GITHUB_PROXY_PREFIX:-https://ghfast.top/}"
 #      改用 apt(阿里云源)装pip + pip(清华源)装uv 这条更快路径 ----
 export UV_INSTALL_TIMEOUT="${UV_INSTALL_TIMEOUT:-30}"
 
+# ---- uv/pip 包缓存指到持久化数据盘 ----
+# 租用实例的容器重置后，python包（torch/transformers/vllm等，装在根分区的
+# /usr/local/lib/.../dist-packages）会被清空，得重新装；但如果下载缓存也在根分区，
+# 连"重新下载"这一步都要再来一遍。把 UV_CACHE_DIR/PIP_CACHE_DIR 指到数据盘，
+# 缓存能跨容器重置存活，下次重装能直接用缓存里的wheel，不用重新联网下载
+# （详见持久记忆 feedback_gpu_rental_persistent_data_disk）。
+_SOURCES_DATA_DIR="${DATA_DIR:-/root/rivermind-data}"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-$_SOURCES_DATA_DIR/.cache/uv}"
+export PIP_CACHE_DIR="${PIP_CACHE_DIR:-$_SOURCES_DATA_DIR/.cache/pip}"
+mkdir -p "$UV_CACHE_DIR" "$PIP_CACHE_DIR"
+
 echo "[sources] PYPI_MIRROR=$PYPI_MIRROR"
 echo "[sources] HF_ENDPOINT=$HF_ENDPOINT (HF_HUB_DISABLE_XET=$HF_HUB_DISABLE_XET)"
 echo "[sources] GITHUB_PROXY_PREFIX=$GITHUB_PROXY_PREFIX (仅在直连不可用时使用)"
 echo "[sources] PREFER_MODELSCOPE_FOR_MODELS=$PREFER_MODELSCOPE_FOR_MODELS"
+echo "[sources] UV_CACHE_DIR=$UV_CACHE_DIR | PIP_CACHE_DIR=$PIP_CACHE_DIR（持久化数据盘，跨容器重置存活）"
 
 # 持久化到 ~/.bashrc，后续新开 shell 也生效（不重复追加）
 for line in \
     "export HF_ENDPOINT=$HF_ENDPOINT" \
-    "export HF_HUB_DISABLE_XET=$HF_HUB_DISABLE_XET"
+    "export HF_HUB_DISABLE_XET=$HF_HUB_DISABLE_XET" \
+    "export UV_CACHE_DIR=$UV_CACHE_DIR" \
+    "export PIP_CACHE_DIR=$PIP_CACHE_DIR"
 do
     grep -qF "$line" ~/.bashrc 2>/dev/null || echo "$line" >> ~/.bashrc
 done

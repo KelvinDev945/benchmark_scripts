@@ -28,9 +28,31 @@ DOWNLOAD_PATH="$DATA_DIR/tools/$CUDA_RUNFILE"
 
 mkdir -p "$DATA_DIR/tools"
 
-if [ -x "$TOOLKIT_INSTALL_PATH/bin/nvcc" ]; then
-    echo "[download_cuda_toolkit] 已装在持久化数据盘，跳过: $TOOLKIT_INSTALL_PATH/bin/nvcc"
-    "$TOOLKIT_INSTALL_PATH/bin/nvcc" --version
+# 验证nvcc不仅"存在"，还要"能跑"且版本号对得上——安装程序退出码是0不代表真的装对了
+# （比如中途磁盘满/权限问题，装出来的东西可能不完整）
+verify_nvcc() {
+    if [ ! -x "$TOOLKIT_INSTALL_PATH/bin/nvcc" ]; then
+        echo "[download_cuda_toolkit] 验证失败：$TOOLKIT_INSTALL_PATH/bin/nvcc 不存在"
+        return 1
+    fi
+    local output
+    if ! output=$("$TOOLKIT_INSTALL_PATH/bin/nvcc" --version 2>&1); then
+        echo "[download_cuda_toolkit] 验证失败：nvcc存在但跑不起来："
+        echo "$output"
+        return 1
+    fi
+    if ! echo "$output" | grep -q "release ${CUDA_VERSION%.0}"; then
+        echo "[download_cuda_toolkit] 验证失败：nvcc版本号跟预期的 ${CUDA_VERSION} 对不上："
+        echo "$output"
+        return 1
+    fi
+    echo "[download_cuda_toolkit] ✅ 验证通过，nvcc 正常可用："
+    echo "$output"
+    return 0
+}
+
+if [ -x "$TOOLKIT_INSTALL_PATH/bin/nvcc" ] && verify_nvcc; then
+    echo "[download_cuda_toolkit] 已装在持久化数据盘，跳过重装"
     exit 0
 fi
 
@@ -44,8 +66,16 @@ fi
 chmod +x "$DOWNLOAD_PATH"
 
 echo "[download_cuda_toolkit] 安装 toolkit 到持久化数据盘（只装toolkit不装驱动，不影响现有GPU驱动）: $TOOLKIT_INSTALL_PATH"
-"$DOWNLOAD_PATH" --toolkit --silent --toolkitpath="$TOOLKIT_INSTALL_PATH" --override
+if ! "$DOWNLOAD_PATH" --toolkit --silent --toolkitpath="$TOOLKIT_INSTALL_PATH" --override; then
+    echo "[download_cuda_toolkit] 错误：安装程序本身返回非0退出码，安装失败"
+    exit 1
+fi
 
-echo "[download_cuda_toolkit] 完成："
-"$TOOLKIT_INSTALL_PATH/bin/nvcc" --version
-echo "下一步：确认 sources.sh 里已经把 $TOOLKIT_INSTALL_PATH/bin 加进 PATH、CUDA_HOME 指到这里"
+echo "[download_cuda_toolkit] 验证安装结果..."
+if ! verify_nvcc; then
+    echo "[download_cuda_toolkit] 错误：安装程序退出码是0，但验证没通过，安装不完整"
+    exit 1
+fi
+
+echo "[download_cuda_toolkit] 完成，装在: $TOOLKIT_INSTALL_PATH"
+echo "下一步：sources.sh 会自动探测这个路径并接进 PATH/CUDA_HOME，无需手动操作"

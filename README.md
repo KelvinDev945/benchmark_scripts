@@ -7,37 +7,49 @@
 `ongoing_project_related/llm-rl-experiments/训练方法论与实验记录.md`
 里的"实验：多卡训练/推理速度基准测试"一节。
 
+## 三步流程
+
+| 步骤 | 需要GPU？ | 入口脚本 | 做什么 |
+|---|---|---|---|
+| Step 1 | wo GPU | `install/step1_wo_gpu.sh` | 下载模型/数据集/JustRL代码 + 装torch/transformers/vllm/unsloth等python依赖 |
+| Step 2 | with GPU | `install/step2_with_gpu.sh` | 装flash-attn(需要nvcc) + 快速验证模型能加载 |
+| Step 3 | with GPU | `hardware/*.sh` + `workload/*.py` | 正式基准测试：硬件跑分 + GRPO训练/推理耗时+显存+吞吐 |
+
+Step 1 建议在**无卡（CPU-only）启动**阶段做完——下载是纯IO，装python依赖包也只是解析
+依赖+下载wheel，都不需要真实GPU，无卡启动通常比挂卡便宜很多。挂卡开始计费后直接从
+Step 2 开始，省下来的无卡等待时间就是省下来的钱。
+
+Step 2 里的 flash-attn 是唯一一个"必须有GPU/nvcc才能装"的包——它没有匹配当前
+torch/cuda/python组合的预编译wheel时会尝试从源码编译，需要nvcc，而nvcc通常要挂卡后
+才可用（无卡阶段实测 `nvcc: command not found`）。所以这一步特意跟Step1分开，不要提前到无卡阶段跑（会必然失败）。
+
 ## 目录结构
 
 ```
 benchmark_scripts/
 ├── install/
-│   ├── sources.sh                   # 统一分发源配置(PyPI镜像/HF_ENDPOINT/GitHub代理)，被下面两个脚本source
-│   ├── download_data_and_code.sh    # 下载base模型/训练数据集/JustRL评测代码 —— 无卡阶段
-│   └── install_deps_uv.sh           # 用uv装torch/transformers/vllm/unsloth等 —— 也是无卡阶段
-├── hardware/                        # 以下全部需要挂卡
-│   ├── run_gpu_burn.sh              # Tensor Core 算力压测
-│   └── run_nvbandwidth.sh           # 显存内带宽 + PCIe 带宽测试
-├── workload/
-│   ├── verify_gpu_environment.py    # 挂卡后先跑这个：快速验证模型能加载，几十秒出结果
-│   ├── train_grpo_benchmark.py      # GRPO训练：耗时拆分(generate vs backward)+显存快照
-│   ├── vllm_throughput_benchmark.py # 独立于训练循环的纯vLLM推理吞吐测试
-│   └── train_grpo_reference.py      # 原始生产训练脚本（未插桩），仅作对照参考
+│   ├── sources.sh                   # 统一分发源配置(PyPI镜像/HF_ENDPOINT/GitHub代理/ModelScope优先)，被其他脚本source
+│   ├── step1_wo_gpu.sh               # [wo GPU] 入口：顺序调用下面两个脚本
+│   │   ├── download_data_and_code.sh #   下载base模型/数据集/JustRL代码
+│   │   └── install_python_deps.sh    #   装torch/transformers/vllm/unsloth等（flash-attn除外）
+│   └── step2_with_gpu.sh             # [with GPU] 入口：顺序调用下面两个脚本
+│       ├── install_flash_attn.sh     #   装flash-attn（需要nvcc）
+│       └── verify_gpu_environment.sh #   快速验证模型能加载+LoRA能包装
+├── hardware/                         # Step 3，需要挂卡
+│   ├── run_gpu_burn.sh               # Tensor Core 算力压测
+│   └── run_nvbandwidth.sh            # 显存内带宽 + PCIe 带宽测试
+├── workload/                         # Step 3，需要挂卡
+│   ├── train_grpo_benchmark.py       # GRPO训练：耗时拆分(generate vs backward)+显存快照
+│   ├── vllm_throughput_benchmark.py  # 独立于训练循环的纯vLLM推理吞吐测试
+│   └── train_grpo_reference.py       # 原始生产训练脚本（未插桩），仅作对照参考
 └── results/
-    └── record_template.md           # 结果记录表 + 跑法速查
+    └── record_template.md            # 结果记录表 + 跑法速查
 ```
-
-## 两阶段设计（省GPU计费时间）
-
-无卡（CPU-only）启动通常比挂卡便宜很多，`install/` 下的两个脚本**都不需要真实GPU**——
-下载模型/数据集/代码是纯IO，装python依赖包也只是解析依赖+下载wheel，跟有没有插卡无关。
-所以这两步应该在无卡阶段做完，挂卡后直接从 `verify_gpu_environment.py` 开始，
-省下的挂卡时间就是省下来的钱。
 
 ## 环境要求
 
 - Unsloth 当前最新版本（2026.7.3）声明的依赖约束：`torch<2.11.0,>=2.4.0`、
-  `transformers<=5.5.0,>=4.51.3`——`install_deps_uv.sh` 已按这个约束一次性装好，
+  `transformers<=5.5.0,>=4.51.3`——`install_python_deps.sh` 已按这个约束一次性装好，
   不要分多次单独 `pip/uv install` 某个包，否则依赖解析器看不到全局约束，
   容易把 torch/transformers 静默升级到不兼容版本（2026-07-17 在 hn01 上踩过这个坑）。
 - Python 3.12（已验证）。
@@ -45,19 +57,21 @@ benchmark_scripts/
 ## 快速开始
 
 ```bash
-# ===== 阶段一：无卡(CPU)启动，先做完，省挂卡计费时间 =====
 export DATA_DIR="/root/rivermind-data"
-bash install/download_data_and_code.sh   # 下载模型/数据集/JustRL代码
-bash install/install_deps_uv.sh          # 装torch/transformers/vllm/unsloth等python依赖
+
+# ===== Step 1 [wo GPU]：无卡阶段做完，省钱 =====
+bash install/step1_wo_gpu.sh
 
 # ===== 挂卡，开始计费 =====
 
-# ===== 阶段二：挂卡后 =====
-export GPU_TAG="rtx4090"   # 每台机器/每张卡换一下这个标签，用于区分产出文件
+# ===== Step 2 [with GPU] =====
 export MODEL_PATH="/root/rivermind-data/models/DeepSeek-R1-Distill-Qwen-1.5B"
+bash install/step2_with_gpu.sh
+
+# ===== Step 3：正式基准测试 =====
+export GPU_TAG="rtx4090"   # 每台机器/每张卡换一下这个标签，用于区分产出文件
 export DATA_PATH="/root/rivermind-data/datasets/DAPO-Math-17k-Processed/en/train-00000-of-00001.parquet"
 
-python3 workload/verify_gpu_environment.py  # 先快速验证环境没问题，几十秒出结果
 bash hardware/run_gpu_burn.sh 180
 bash hardware/run_nvbandwidth.sh
 python3 workload/train_grpo_benchmark.py

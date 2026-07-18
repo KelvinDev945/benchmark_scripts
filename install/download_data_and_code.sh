@@ -6,12 +6,20 @@ set -e
 DATA_DIR="${DATA_DIR:-/root/rivermind-data}"
 mkdir -p "$DATA_DIR/models" "$DATA_DIR/datasets"
 
-echo '=== 0. 确保 uv 可用（有些精简镜像连 pip 都没有，不能假设 pip 已存在） ==='
+echo '=== 0. 确保 uv 可用 ==='
 if ! command -v uv >/dev/null 2>&1; then
-    curl -LsSf https://astral.sh/uv/install.sh | sh 2>&1 | tail -5
-    export PATH="$HOME/.local/bin:$PATH"
-    grep -q '.local/bin' ~/.bashrc 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+    echo "尝试官方独立安装脚本（走 GitHub Releases CDN，部分国内网络环境会很慢/卡住，最多等30秒）"
+    if timeout 30 bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh' 2>&1 | tail -5; then
+        export PATH="$HOME/.local/bin:$PATH"
+        grep -q '.local/bin' ~/.bashrc 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+    fi
 fi
+if ! command -v uv >/dev/null 2>&1; then
+    echo "官方安装脚本超时/失败，改用 apt(阿里云源)装pip + pip(清华源)装uv 这条更快的路径"
+    apt-get update -qq && apt-get install -y -qq python3-pip
+    python3 -m pip install -qqq uv -i https://pypi.tuna.tsinghua.edu.cn/simple
+fi
+echo "uv: $(uv --version)"
 
 echo '=== 0b. 检查/装好 modelscope + huggingface_hub（下载模型/数据集要用） ==='
 if ! python3 -c "import modelscope" >/dev/null 2>&1; then

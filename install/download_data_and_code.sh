@@ -46,6 +46,16 @@ from huggingface_hub import snapshot_download
 snapshot_download(repo_id='open-r1/DAPO-Math-17k-Processed', repo_type='dataset', local_dir='$DATA_DIR/datasets/DAPO-Math-17k-Processed')
 "
 
+# 显式复查：snapshot_download正常返回不代表真的下完了（比如中途网络断开但异常被吞掉的边界情况），
+# 留有 *.incomplete 文件就说明没下完，必须报错退出而不是让后面的步骤在残缺数据上继续跑
+INCOMPLETE_FILES=$(find "$DATA_DIR/models/DeepSeek-R1-Distill-Qwen-1.5B" "$DATA_DIR/datasets/DAPO-Math-17k-Processed" -name '*.incomplete' 2>/dev/null)
+if [ -n "$INCOMPLETE_FILES" ]; then
+    echo "错误：以下文件下载不完整，重新运行本脚本以续传："
+    echo "$INCOMPLETE_FILES"
+    exit 1
+fi
+echo "已核实：模型和数据集均无残留的 .incomplete 文件"
+
 if [ ! -d "$DATA_DIR/JustRL" ]; then
     # 先测GitHub直连，不通则走代理（每台实例网络环境不一样，不能假设一致）
     if curl -s -m 8 -o /dev/null -w '%{http_code}' https://github.com | grep -q '200'; then

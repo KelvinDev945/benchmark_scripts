@@ -5,22 +5,25 @@
 # ongoing_project_related/llm-rl-experiments/环境与框架.md）
 set -e
 
+echo '=== 0. 加载统一分发源配置 ==='
+source "$(dirname "${BASH_SOURCE[0]}")/sources.sh"
+
 echo '=== 1. 安装/升级 uv ==='
 # 有些精简镜像（比如 fj01 新实例）连 pip 都没有，不能假设 pip 一定存在。
 # 优先用 uv 官方独立安装脚本（不依赖pip）；这个脚本走 GitHub Releases CDN 下载二进制，
-# 部分国内网络环境下会卡住/极慢（fj01上实测卡死），设30秒超时，超时/失败就换更快的路径：
-# apt(阿里云源)装pip + pip(清华源)装uv。全程目标都是尽快用上uv，pip只是一次性引导手段。
+# 部分国内网络环境下会卡住/极慢（fj01上实测卡死），超时就换更快的路径：
+# apt(系统预配置的镜像源)装pip + pip($PYPI_MIRROR)装uv。全程目标都是尽快用上uv，pip只是一次性引导手段。
 if command -v uv >/dev/null 2>&1; then
     echo "uv 已存在: $(uv --version)"
 else
-    if timeout 30 bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh' 2>&1 | tail -5; then
+    if timeout "$UV_INSTALL_TIMEOUT" bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh' 2>&1 | tail -5; then
         export PATH="$HOME/.local/bin:$PATH"
         grep -q '.local/bin' ~/.bashrc 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
     fi
     if ! command -v uv >/dev/null 2>&1; then
-        echo "官方安装脚本超时/失败，改用 apt(阿里云源)装pip + pip(清华源)装uv"
+        echo "官方安装脚本超时/失败，改用 apt + pip($PYPI_MIRROR)装uv"
         apt-get update -qq && apt-get install -y -qq python3-pip
-        python3 -m pip install -qqq uv -i https://pypi.tuna.tsinghua.edu.cn/simple
+        python3 -m pip install -qqq uv -i "$PYPI_MIRROR"
     fi
     echo "uv: $(uv --version)"
 fi
@@ -66,14 +69,14 @@ echo "=== 4. 一次性统一安装（关键：全部放进同一条 uv pip insta
 if [ "$SKIP_TORCH_REINSTALL" = true ]; then
     # torch 已满足约束：不传 torch 给 uv、不加 --upgrade，避免 uv 为了满足其他包的依赖声明
     # 而把已经装好、CUDA tag匹配的 torch 换掉
-    uv pip install --system -qqq \
+    uv pip install --system -qqq -i "$PYPI_MIRROR" \
         'transformers<=5.5.0,>=4.51.3' \
         "$VLLM_PKG" \
         unsloth trl peft accelerate bitsandbytes xformers \
         torchvision numpy pillow \
         modelscope huggingface_hub wandb gpustat
 else
-    uv pip install --system -qqq --upgrade \
+    uv pip install --system -qqq -i "$PYPI_MIRROR" --upgrade \
         'torch<2.11.0,>=2.4.0' \
         'transformers<=5.5.0,>=4.51.3' \
         "$VLLM_PKG" \
@@ -82,7 +85,7 @@ else
         modelscope huggingface_hub wandb gpustat
 fi
 
-uv pip install --system -qqq "$TRITON_PKG"
+uv pip install --system -qqq -i "$PYPI_MIRROR" "$TRITON_PKG"
 
 echo '=== 4b（附加校验）. 核实 torch 版本/CUDA tag 在装完其他包后有没有被意外换掉 ==='
 python3 -c "
@@ -90,15 +93,13 @@ import torch
 print('torch', torch.__version__, '| cuda build:', torch.version.cuda)
 "
 
-echo '=== 5. 禁用 HF 新版 xet 存储后端（部分 hf-mirror 节点转发 xet 会 401，详见环境文档） ==='
-export HF_HUB_DISABLE_XET=1
-grep -q HF_HUB_DISABLE_XET ~/.bashrc 2>/dev/null || echo 'export HF_HUB_DISABLE_XET=1' >> ~/.bashrc
+echo '=== 5. HF镜像/xet设置已在 sources.sh 里统一配置好，这里跳过重复设置 ==='
 
 echo '=== 6. 验证 torch CUDA 可用 ==='
 python3 -c 'import torch; print("torch", torch.__version__, "cuda_available:", torch.cuda.is_available())'
 
 echo '=== 7. 安装 flash-attn（可选，预编译wheel不匹配当前torch/cuda/python版本时会跳过，不影响主流程） ==='
-uv pip install --system -qqq flash-attn --no-build-isolation \
+uv pip install --system -qqq -i "$PYPI_MIRROR" flash-attn --no-build-isolation \
     || echo 'flash-attn 预编译wheel不匹配，跳过（Unsloth 默认走 FlashAttention2/xformers 也能跑）'
 
 echo '=== 全部完成 ==='

@@ -25,13 +25,17 @@
 
 ## 三、跑法（复制粘贴用）
 
-```bash
-export GPU_TAG="rtx3090"   # 每张卡换一下这个标签
-export MODEL_PATH="/root/rivermind-data/models/DeepSeek-R1-Distill-Qwen-1.5B"
-export DATA_PATH="/root/rivermind-data/datasets/DAPO-Math-17k-Processed/en/train-00000-of-00001.parquet"
-export OUTPUT_DIR="/root/rivermind-data/outputs/benchmark_run"
+> `DATA_DIR=/root/rivermind-data` 是持久化数据盘，所有产出（模型/数据集/工具/结果）都落在
+> 这里面，不会因为实例释放/重启丢失（详见持久记忆 feedback_gpu_rental_persistent_data_disk）。
 
-# 1. 硬件基础测试
+```bash
+export DATA_DIR="/root/rivermind-data"
+export GPU_TAG="rtx3090"   # 每张卡换一下这个标签
+export MODEL_PATH="$DATA_DIR/models/DeepSeek-R1-Distill-Qwen-1.5B"
+export DATA_PATH="$DATA_DIR/datasets/DAPO-Math-17k-Processed/en/train-00000-of-00001.parquet"
+export OUTPUT_DIR="$DATA_DIR/outputs/benchmark_run"
+
+# 1. 硬件基础测试（结果自动存到 $DATA_DIR/benchmark_results/）
 bash hardware/run_gpu_burn.sh 180
 bash hardware/run_nvbandwidth.sh
 
@@ -43,4 +47,5 @@ python3 workload/vllm_throughput_benchmark.py
 ```
 
 跑完把 `$OUTPUT_DIR/benchmark_summary_$GPU_TAG.json`、`$OUTPUT_DIR/vllm_throughput_$GPU_TAG.json`
-和 `/tmp/gpu_burn_result_*.log`、`/tmp/nvbandwidth_result_*.log` scp 回本地存进这个 `results/` 目录。
+和 `$DATA_DIR/benchmark_results/gpu_burn_result_*.log`、`$DATA_DIR/benchmark_results/nvbandwidth_result_*.log`
+scp 回本地存进这个 `results/` 目录。

@@ -23,6 +23,14 @@ Step 2 里的 flash-attn 是唯一一个"必须有GPU/nvcc才能装"的包——
 torch/cuda/python组合的预编译wheel时会尝试从源码编译，需要nvcc，而nvcc通常要挂卡后
 才可用（无卡阶段实测 `nvcc: command not found`）。所以这一步特意跟Step1分开，不要提前到无卡阶段跑（会必然失败）。
 
+## ⚠️ 数据保存位置：`/root/rivermind-data`
+
+这是**持久化数据盘**，不是根分区——租用的GPU实例（智川云等）根分区/`/tmp`/`$HOME`都是临时的，
+实例释放或重启就会清空，只有挂载的数据盘内容会保留。**模型、数据集、JustRL代码、python依赖的
+下载缓存、训练/基准测试的所有输出、gpu-burn/nvbandwidth这类工具的clone+编译产物**，全部必须
+落在 `$DATA_DIR`（默认 `/root/rivermind-data`）下面，不要写到 `$HOME/github`、`/tmp` 或其他
+根分区路径。所有脚本的默认值都已经这样设置，改配置时也要遵守这条。
+
 ## 目录结构
 
 ```

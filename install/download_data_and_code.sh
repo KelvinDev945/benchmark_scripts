@@ -5,6 +5,9 @@
 set -e
 
 source "$(dirname "${BASH_SOURCE[0]}")/sources.sh"
+# /root/rivermind-data 是持久化数据盘，不是根分区，实例释放/重启不会丢——
+# 所有模型/数据集/代码/输出都必须落在这里，不要改成根分区下的路径
+# （详见持久记忆 feedback_gpu_rental_persistent_data_disk / obsidian 环境与框架.md）
 DATA_DIR="${DATA_DIR:-/root/rivermind-data}"
 mkdir -p "$DATA_DIR/models" "$DATA_DIR/datasets"
 

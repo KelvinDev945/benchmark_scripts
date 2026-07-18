@@ -3,20 +3,27 @@
 # 用法：./run_gpu_burn.sh [压测时长秒数，默认180]
 set -e
 
+# 工具本身(clone+编译产物)和结果都放持久化数据盘（DATA_DIR），不放 $HOME/github 或 /tmp——
+# 那些路径都在根分区，是临时的，实例释放/重启就没了，得重新clone+编译
+# （详见持久记忆 feedback_gpu_rental_persistent_data_disk）
+DATA_DIR="${DATA_DIR:-/root/rivermind-data}"
+RESULTS_DIR="$DATA_DIR/benchmark_results"
+GPUBURN_DIR="$DATA_DIR/tools/gpu-burn"
+mkdir -p "$RESULTS_DIR" "$(dirname "$GPUBURN_DIR")"
+
 DURATION="${1:-180}"
-GPUBURN_DIR="$HOME/github/gpu-burn"
 
 if [ ! -d "$GPUBURN_DIR" ]; then
-    echo "=== clone + 编译 gpu-burn ==="
+    echo "=== clone + 编译 gpu-burn（存到持久化数据盘: $GPUBURN_DIR） ==="
     git clone https://github.com/wilicc/gpu-burn.git "$GPUBURN_DIR"
     (cd "$GPUBURN_DIR" && make)
 fi
 
-echo "=== 运行 gpu-burn（Tensor Core, 显存占用90%上限, ${DURATION}秒） ==="
+echo "=== 运行 gpu-burn（Tensor Core, 显存占用90%上限, ${DURATION}秒，结果存到: $RESULTS_DIR） ==="
 echo "⚠️ 注意：gpu-burn 用 WMMA API，对 Blackwell(50系) 架构没做针对性优化，"
 echo "   测出来的数字可能低于该架构的真实算力（尤其是FP8），只能作为同代架构内的参考"
 cd "$GPUBURN_DIR"
-./gpu_burn -tc -m 90% "$DURATION" | tee "/tmp/gpu_burn_result_$(date +%Y%m%d_%H%M%S).log"
+./gpu_burn -tc -m 90% "$DURATION" | tee "$RESULTS_DIR/gpu_burn_result_$(date +%Y%m%d_%H%M%S).log"
 
 echo
 echo "=== 关键指标说明 ==="

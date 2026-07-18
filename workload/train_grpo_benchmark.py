@@ -16,6 +16,9 @@ import os
 import time
 import json
 
+# 默认路径全部落在 /root/rivermind-data —— 这是持久化数据盘，不是根分区，
+# 实例释放/重启数据不会丢。不要改成根分区下的路径（详见持久记忆
+# feedback_gpu_rental_persistent_data_disk / obsidian 环境与框架.md）
 MODEL_PATH = os.environ.get("MODEL_PATH", "/root/rivermind-data/models/DeepSeek-R1-Distill-Qwen-1.5B")
 DATA_PATH = os.environ.get(
     "DATA_PATH",

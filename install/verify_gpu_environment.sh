@@ -3,6 +3,8 @@
 # 被 step2_with_gpu.sh 调用，也可以单独跑。
 set -e
 
+# /root/rivermind-data 是持久化数据盘，不是根分区，实例释放/重启不会丢
+# （详见持久记忆 feedback_gpu_rental_persistent_data_disk / obsidian 环境与框架.md）
 MODEL_PATH="${MODEL_PATH:-/root/rivermind-data/models/DeepSeek-R1-Distill-Qwen-1.5B}"
 
 echo '--- 确认 GPU 可见 ---'

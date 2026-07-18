@@ -2,7 +2,13 @@
 # GPU 显存带宽 + PCIe 带宽测试，来自 gpu_rent/常见问题/gpu_benchmark.md 的方法论
 set -e
 
-NVBW_DIR="$HOME/github/nvbandwidth"
+# 工具本身(clone+编译产物)和结果都放持久化数据盘（DATA_DIR），不放 $HOME/github 或 /tmp——
+# 那些路径都在根分区，是临时的，实例释放/重启就没了，得重新clone+编译
+# （详见持久记忆 feedback_gpu_rental_persistent_data_disk）
+DATA_DIR="${DATA_DIR:-/root/rivermind-data}"
+RESULTS_DIR="$DATA_DIR/benchmark_results"
+NVBW_DIR="$DATA_DIR/tools/nvbandwidth"
+mkdir -p "$RESULTS_DIR" "$(dirname "$NVBW_DIR")"
 
 echo "=== 安装依赖 ==="
 apt update && apt install -y libboost-program-options-dev
@@ -14,9 +20,9 @@ if [ ! -d "$NVBW_DIR" ]; then
     (cd "$NVBW_DIR/build" && cmake .. -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc && make -j4)
 fi
 
-echo "=== 运行 nvbandwidth ==="
+echo "=== 运行 nvbandwidth（结果存到持久化数据盘: $RESULTS_DIR） ==="
 cd "$NVBW_DIR/build"
-./nvbandwidth | tee "/tmp/nvbandwidth_result_$(date +%Y%m%d_%H%M%S).log"
+./nvbandwidth | tee "$RESULTS_DIR/nvbandwidth_result_$(date +%Y%m%d_%H%M%S).log"
 
 echo
 echo "=== 关键字段说明 ==="

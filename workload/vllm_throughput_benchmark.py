@@ -12,6 +12,8 @@ import os
 import time
 import json
 
+# 默认路径全部落在 /root/rivermind-data —— 持久化数据盘，不是根分区，实例释放/重启不会丢
+# （详见持久记忆 feedback_gpu_rental_persistent_data_disk / obsidian 环境与框架.md）
 MODEL_PATH = os.environ.get("MODEL_PATH", "/root/rivermind-data/models/DeepSeek-R1-Distill-Qwen-1.5B")
 LORA_PATH = os.environ.get("LORA_PATH", "")  # 留空则不加载LoRA，纯测base模型吞吐
 LORA_RANK = int(os.environ.get("LORA_RANK", "1"))

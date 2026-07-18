@@ -24,6 +24,14 @@ export PREFER_MODELSCOPE_FOR_MODELS=true
 # ---- GitHub：先探测直连，不通再走这个代理前缀（每台实例网络环境不一样，不能假设一致） ----
 export GITHUB_PROXY_PREFIX="${GITHUB_PROXY_PREFIX:-https://ghfast.top/}"
 
+# ---- GitHub Release 大文件下载专用代理链（跟上面git clone用的代理分开）----
+# 2026-07-18在fj01上实测：GitHub Release资产会重定向到release-assets.githubusercontent.com，
+# 直连这个域名只有~19KB/s（256MB的wheel根本下不完）；ghfast.top对这类资产重定向下载不work
+# （直接失败）；gh-proxy.com实测能到~1.5MB/s，快80倍。所以release大文件下载单独维护一条
+# 代理列表（不含"直连"，调用方自己先试直连再遍历这个列表），跟git clone用的
+# GITHUB_PROXY_PREFIX区分开，因为两种下载方式(git协议 vs 直接文件下载)对代理的要求不一样。
+export GITHUB_RELEASE_PROXY_CHAIN="${GITHUB_RELEASE_PROXY_CHAIN:-https://gh-proxy.com/ $GITHUB_PROXY_PREFIX}"
+
 # ---- uv 官方安装脚本超时时间（秒）：超过这个时间就放弃走GitHub Releases CDN，
 #      改用 apt(阿里云源)装pip + pip(清华源)装uv 这条更快路径 ----
 export UV_INSTALL_TIMEOUT="${UV_INSTALL_TIMEOUT:-30}"
@@ -53,6 +61,7 @@ fi
 echo "[sources] PYPI_MIRROR=$PYPI_MIRROR"
 echo "[sources] HF_ENDPOINT=$HF_ENDPOINT (HF_HUB_DISABLE_XET=$HF_HUB_DISABLE_XET)"
 echo "[sources] GITHUB_PROXY_PREFIX=$GITHUB_PROXY_PREFIX (仅在直连不可用时使用)"
+echo "[sources] GITHUB_RELEASE_PROXY_CHAIN=$GITHUB_RELEASE_PROXY_CHAIN (Release大文件下载专用，直连太慢/失败时依次尝试)"
 echo "[sources] PREFER_MODELSCOPE_FOR_MODELS=$PREFER_MODELSCOPE_FOR_MODELS"
 echo "[sources] UV_CACHE_DIR=$UV_CACHE_DIR | PIP_CACHE_DIR=$PIP_CACHE_DIR（持久化数据盘，跨容器重置存活）"
 if [ -n "${CUDA_HOME:-}" ]; then

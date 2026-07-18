@@ -1,12 +1,17 @@
 """
-"单独训练"场景：找这张卡在纯训练(不跑vLLM推理引擎)下最大能撑多大的 batch size。
+"单独训练"场景：找这张卡在训练时最大能撑多大的 batch size。
 
-用子进程跑 train_grpo_benchmark.py（USE_VLLM=0，BENCHMARK_STEPS给小值只是为了探测OOM，
-不追求准确计时），每个batch size一个独立子进程——避免在同一进程里反复扫描时，
-前一次OOM残留的显存碎片/未释放对象影响下一次测试的准确性。
+用子进程跑 train_only_benchmark.py（BENCHMARK_STEPS给小值只是为了探测OOM，不追求准确
+计时），每个batch size一个独立子进程——避免在同一进程里反复扫描时，前一次OOM残留的
+显存碎片/未释放对象影响下一次测试的准确性。
+
+关键：train_only_benchmark.py 里 vLLM引擎保持加载(fast_inference=True)，KV cache照常
+预留显存——不是"假装没有vLLM"，因为真实GRPO训练流程里vLLM从trainer初始化起就常驻显存，
+这里测的是"vLLM占着它那份显存之后，训练侧还能用多大batch"，才是真实可用的上限
+（2026-07-19修正：早期版本直接把vLLM关掉来测，会得出偏乐观、不符合实际流水线的数字）。
 
 用法：
-  MODEL_PATH=... DATA_PATH=... python3 sweep_max_train_batch.py
+  MODEL_PATH=... python3 sweep_max_train_batch.py
   可选：SWEEP_START=1 SWEEP_MAX=64 GPU_TAG=xxx
 """
 
@@ -21,10 +26,6 @@ import json
 sys.stdout.reconfigure(line_buffering=True)
 
 MODEL_PATH = os.environ.get("MODEL_PATH", "/root/rivermind-data/models/DeepSeek-R1-Distill-Qwen-1.5B")
-DATA_PATH = os.environ.get(
-    "DATA_PATH",
-    "/root/rivermind-data/datasets/DAPO-Math-17k-Processed/en/train-00000-of-00001.parquet",
-)
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/root/rivermind-data/outputs/benchmark_run")
 GPU_TAG = os.environ.get("GPU_TAG", "unknown_gpu")
 
@@ -32,7 +33,7 @@ SWEEP_START = int(os.environ.get("SWEEP_START", "1"))
 SWEEP_MAX = int(os.environ.get("SWEEP_MAX", "64"))  # 上限保护，避免死循环扫到不合理的大小
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-TRAIN_SCRIPT = os.path.join(SCRIPT_DIR, "train_grpo_benchmark.py")
+TRAIN_SCRIPT = os.path.join(SCRIPT_DIR, "train_only_benchmark.py")
 
 
 def try_batch_size(batch_size):
@@ -40,12 +41,9 @@ def try_batch_size(batch_size):
     env = os.environ.copy()
     env.update({
         "MODEL_PATH": MODEL_PATH,
-        "DATA_PATH": DATA_PATH,
         "OUTPUT_DIR": OUTPUT_DIR,
         "GPU_TAG": f"{GPU_TAG}_sweep_bs{batch_size}",
-        "USE_VLLM": "0",           # 单独训练场景：不启动vLLM推理引擎
         "TRAIN_BATCH_SIZE": str(batch_size),
-        "GRAD_ACCUM": "1",         # 只关心单次forward+backward能不能撑住这个batch，不需要梯度累积
         "BENCHMARK_STEPS": "2",    # 探测OOM只需要跑通几步，不用完整benchmark步数
     })
     print(f"[sweep] 尝试 TRAIN_BATCH_SIZE={batch_size} ...")

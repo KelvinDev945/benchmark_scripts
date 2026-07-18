@@ -21,7 +21,11 @@ DURATION="${1:-180}"
 if [ ! -d "$GPUBURN_DIR" ]; then
     echo "=== clone + 编译 gpu-burn（存到持久化数据盘: $GPUBURN_DIR） ==="
     git clone https://github.com/wilicc/gpu-burn.git "$GPUBURN_DIR"
-    (cd "$GPUBURN_DIR" && make)
+    # gpu-burn 的 Makefile 只认 /usr 或 /usr/local/cuda 这两个硬编码路径找nvcc，
+    # 不认 CUDA_HOME/PATH，必须显式传 CUDAPATH 变量给make，否则INCLUDE路径是空的
+    # （拼出 -I/include 这种错误路径，实测报 cublas_v2.h 找不到）
+    CUDA_ROOT=$(dirname "$(dirname "$(command -v nvcc)")")
+    (cd "$GPUBURN_DIR" && make CUDAPATH="$CUDA_ROOT")
 fi
 
 echo "=== 运行 gpu-burn（Tensor Core, 显存占用90%上限, ${DURATION}秒，结果存到: $RESULTS_DIR） ==="

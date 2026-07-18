@@ -16,7 +16,7 @@ NVBW_DIR="$DATA_DIR/tools/nvbandwidth"
 mkdir -p "$RESULTS_DIR" "$(dirname "$NVBW_DIR")"
 
 echo "=== 安装依赖 ==="
-apt update && apt install -y libboost-program-options-dev
+apt update && apt install -y libboost-program-options-dev cmake
 
 if [ ! -d "$NVBW_DIR" ]; then
     echo "=== clone + 编译 nvbandwidth ==="

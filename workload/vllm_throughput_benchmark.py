@@ -37,9 +37,12 @@ def main():
     print(f"[config] gpu_tag={GPU_TAG} model={MODEL_PATH} lora_path={LORA_PATH or '(none)'} "
           f"num_prompts={NUM_PROMPTS} max_new_tokens={MAX_NEW_TOKENS}")
 
+    # max_seq_length 要跟着 MAX_NEW_TOKENS 放大（+512给prompt留余量），否则扫描更长
+    # 长度时会被这里的硬上限提前截断/拒绝，而不是真的测到显存OOM的那个边界
+    max_seq_length = MAX_NEW_TOKENS + 512
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=MODEL_PATH,
-        max_seq_length=2048,
+        max_seq_length=max_seq_length,
         load_in_4bit=False,
         fast_inference=True,
         max_lora_rank=max(LORA_RANK, 8),

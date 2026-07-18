@@ -13,12 +13,21 @@ mkdir -p "$DATA_DIR/models" "$DATA_DIR/datasets"
 
 if ! command -v uv >/dev/null 2>&1; then
     # 官方安装脚本走GitHub Releases CDN，国内网络有时会卡住，超时就换更快的路径：apt装pip + pip($PYPI_MIRROR)装uv
-    if ! timeout "$UV_INSTALL_TIMEOUT" bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh' 2>&1 | tail -5; then
+    # 注意：不能靠这条管道命令自己的退出码判断成功与否——`cmd | tail -5` 这种管道，
+    # `if !` 默认只看最后一段(tail)的退出码，tail 基本总是成功，会把真正失败的uv安装
+    # 误判成"成功"。必须在安装尝试后重新显式检查 uv 是否真的能跑起来。
+    timeout "$UV_INSTALL_TIMEOUT" bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh' 2>&1 | tail -5 || true
+    export PATH="$HOME/.local/bin:$PATH"
+    grep -q '.local/bin' ~/.bashrc 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+    if ! command -v uv >/dev/null 2>&1; then
+        echo "官方安装脚本没能装出可用的uv，改用 apt装pip + pip($PYPI_MIRROR)装uv"
         apt-get update -qq && apt-get install -y -qq python3-pip
         python3 -m pip install -qqq uv -i "$PYPI_MIRROR"
     fi
-    export PATH="$HOME/.local/bin:$PATH"
-    grep -q '.local/bin' ~/.bashrc 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+fi
+if ! command -v uv >/dev/null 2>&1; then
+    echo "错误：两条安装路径都没能装出可用的uv，无法继续"
+    exit 1
 fi
 echo "uv: $(uv --version)"
 

@@ -22,25 +22,65 @@ else
     TRITON_PKG="triton"
 fi
 
-echo "=== 3. 一次性统一安装（关键：全部放进同一条 uv pip install，让依赖解析器同时看到所有约束） ==="
-uv pip install --system -qqq --upgrade \
-    'torch<2.11.0,>=2.4.0' \
-    'transformers<=5.5.0,>=4.51.3' \
-    "$VLLM_PKG" \
-    unsloth trl peft accelerate bitsandbytes xformers \
-    torchvision numpy pillow \
-    modelscope huggingface_hub wandb gpustat
+echo '=== 3. 检查基础镜像自带的 torch 是否已满足 Unsloth 约束（torch<2.11.0,>=2.4.0） ==='
+# 有些基础镜像（比如 2.9.0-cuda12.8 系列）已经预装了满足约束、且CUDA tag对得上系统驱动的torch，
+# 这种情况下不应该再对 torch 用 --upgrade，否则 uv 可能把它换成约束范围内的更新版本，
+# 连带引入不同 CUDA 编译版本的 torchvision/torchaudio wheel，导致CUDA版本不匹配
+# （2026-07-17 在 hn01 上就是 pip install vllm 把 torch 从 cu128 悄悄换成 cu130 弄坏了 torchaudio）。
+SKIP_TORCH_REINSTALL=false
+if python3 -c "
+import sys
+try:
+    import torch
+except ImportError:
+    sys.exit(1)
+from packaging.version import Version
+v = Version(torch.__version__.split('+')[0])
+sys.exit(0 if (Version('2.4.0') <= v < Version('2.11.0')) else 1)
+" 2>/dev/null; then
+    SKIP_TORCH_REINSTALL=true
+    EXISTING_TORCH_VERSION=$(python3 -c "import torch; print(torch.__version__)")
+    echo "已检测到基础镜像自带 torch ${EXISTING_TORCH_VERSION}，满足约束，跳过重装以保留镜像原生 CUDA wheel 组合"
+else
+    echo "未检测到满足约束的 torch，将在下一步一起装"
+fi
+
+echo "=== 4. 一次性统一安装（关键：全部放进同一条 uv pip install，让依赖解析器同时看到所有约束） ==="
+if [ "$SKIP_TORCH_REINSTALL" = true ]; then
+    # torch 已满足约束：不传 torch 给 uv、不加 --upgrade，避免 uv 为了满足其他包的依赖声明
+    # 而把已经装好、CUDA tag匹配的 torch 换掉
+    uv pip install --system -qqq \
+        'transformers<=5.5.0,>=4.51.3' \
+        "$VLLM_PKG" \
+        unsloth trl peft accelerate bitsandbytes xformers \
+        torchvision numpy pillow \
+        modelscope huggingface_hub wandb gpustat
+else
+    uv pip install --system -qqq --upgrade \
+        'torch<2.11.0,>=2.4.0' \
+        'transformers<=5.5.0,>=4.51.3' \
+        "$VLLM_PKG" \
+        unsloth trl peft accelerate bitsandbytes xformers \
+        torchvision numpy pillow \
+        modelscope huggingface_hub wandb gpustat
+fi
 
 uv pip install --system -qqq "$TRITON_PKG"
 
-echo '=== 4. 禁用 HF 新版 xet 存储后端（部分 hf-mirror 节点转发 xet 会 401，详见环境文档） ==='
+echo '=== 4b（附加校验）. 核实 torch 版本/CUDA tag 在装完其他包后有没有被意外换掉 ==='
+python3 -c "
+import torch
+print('torch', torch.__version__, '| cuda build:', torch.version.cuda)
+"
+
+echo '=== 5. 禁用 HF 新版 xet 存储后端（部分 hf-mirror 节点转发 xet 会 401，详见环境文档） ==='
 export HF_HUB_DISABLE_XET=1
 grep -q HF_HUB_DISABLE_XET ~/.bashrc 2>/dev/null || echo 'export HF_HUB_DISABLE_XET=1' >> ~/.bashrc
 
-echo '=== 5. 验证 torch CUDA 可用 ==='
+echo '=== 6. 验证 torch CUDA 可用 ==='
 python3 -c 'import torch; print("torch", torch.__version__, "cuda_available:", torch.cuda.is_available())'
 
-echo '=== 6. 安装 flash-attn（可选，预编译wheel不匹配当前torch/cuda/python版本时会跳过，不影响主流程） ==='
+echo '=== 7. 安装 flash-attn（可选，预编译wheel不匹配当前torch/cuda/python版本时会跳过，不影响主流程） ==='
 uv pip install --system -qqq flash-attn --no-build-isolation \
     || echo 'flash-attn 预编译wheel不匹配，跳过（Unsloth 默认走 FlashAttention2/xformers 也能跑）'
 

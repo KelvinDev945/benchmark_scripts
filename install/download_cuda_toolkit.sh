@@ -1,21 +1,21 @@
 #!/bin/bash
-# [wo GPU，可选] 下载 + 安装 CUDA Toolkit（含nvcc）到持久化数据盘。
+# [wo GPU，默认不装] 下载 + 安装 CUDA Toolkit（含nvcc）到持久化数据盘。
 #
-# 背景：`nvidia-cuda-nvcc-cu12` 这个pip包实测不含真正的nvcc可执行文件（只有ptxas等组件），
-# apt的 nvidia-cuda-toolkit 版本可能跟torch用的cu128对不上；官方 .run 安装包最可靠。
+# 现状：install_python_deps.sh 把 torch 锁定在 2.8.x，install_flash_attn.sh 因此
+# 能直接装 flash-attn 官方预编译wheel，不再需要从源码编译——而nvcc唯一的用途就是
+# 编译flash-attn，所以**默认不再需要装这个**。保留这个脚本是为了以后万一某个包
+# 又需要从源码编译CUDA代码时可以随时手动开启，不是默认流程的一部分。
 #
-# 关键设计：装文件本身不需要GPU在场（只有跑CUDA代码才需要），而且如果装到根分区
-# （默认 /usr/local/cuda），容器重置就会被清空，每次都要重新下载+装一遍（~5.4GB）。
-# 这里改成显式装到持久化数据盘（$DATA_DIR/cuda-toolkit），装一次，跨容器重置永久存活，
-# 配合 sources.sh 里的 CUDA_HOME/PATH 设置，重置后不用重装就能直接用。
+# 默认关闭，需要显式打开：INSTALL_CUDA_TOOLKIT=1 bash download_cuda_toolkit.sh
 #
-# 默认开启（无卡阶段跑，不占GPU计费时间；不想装就设 INSTALL_CUDA_TOOLKIT=0 跳过）。
-# 用法：bash download_cuda_toolkit.sh          # 默认装
-#       INSTALL_CUDA_TOOLKIT=0 bash download_cuda_toolkit.sh   # 跳过
+# 关键设计（如果启用）：装文件本身不需要GPU在场（只有跑CUDA代码才需要），而且如果
+# 装到根分区（默认 /usr/local/cuda），容器重置就会被清空，每次都要重新下载+装一遍
+# （~5.4GB）。这里改成显式装到持久化数据盘（$DATA_DIR/cuda-toolkit），装一次，
+# 跨容器重置永久存活，配合 sources.sh 里的 CUDA_HOME/PATH 设置，重置后不用重装就能直接用。
 set -e
 
-if [ "${INSTALL_CUDA_TOOLKIT:-1}" != "1" ]; then
-    echo "[download_cuda_toolkit] 跳过（INSTALL_CUDA_TOOLKIT=0 显式关闭）"
+if [ "${INSTALL_CUDA_TOOLKIT:-0}" != "1" ]; then
+    echo "[download_cuda_toolkit] 跳过（默认不装——flash-attn现在用预编译wheel，不需要nvcc；需要就设 INSTALL_CUDA_TOOLKIT=1）"
     exit 0
 fi
 

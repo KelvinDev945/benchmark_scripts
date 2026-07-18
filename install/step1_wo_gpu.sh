@@ -6,16 +6,16 @@
 set -e
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-echo "===== [1/3] download_data_and_code.sh ====="
+echo "===== [1/4] download_data_and_code.sh ====="
 bash download_data_and_code.sh
 
-echo "===== [2/3] install_python_deps.sh ====="
+echo "===== [2/4] install_python_deps.sh（torch锁定在2.8.x，让flash-attn能用预编译wheel） ====="
 bash install_python_deps.sh
 
-echo "===== [3/4] download_cuda_toolkit.sh（默认装nvcc，INSTALL_CUDA_TOOLKIT=0 可跳过） ====="
+echo "===== [3/4] download_cuda_toolkit.sh（默认跳过——flash-attn现在用预编译wheel不需要nvcc了） ====="
 bash download_cuda_toolkit.sh
 
-echo "===== [4/4] install_flash_attn.sh（编译本身只需要nvcc，不需要GPU在场，跟Step1其他步骤一样） ====="
+echo "===== [4/4] install_flash_attn.sh（优先装预编译wheel，几秒钟完事；没有匹配wheel才退回源码编译） ====="
 bash install_flash_attn.sh
 
 echo

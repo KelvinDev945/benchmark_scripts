@@ -99,7 +99,42 @@ echo '=== 6. 验证 torch CUDA 可用 ==='
 python3 -c 'import torch; print("torch", torch.__version__, "cuda_available:", torch.cuda.is_available())'
 
 echo '=== 7. 安装 flash-attn（可选，预编译wheel不匹配当前torch/cuda/python版本时会跳过，不影响主流程） ==='
-uv pip install --system -qqq -i "$PYPI_MIRROR" flash-attn --no-build-isolation \
-    || echo 'flash-attn 预编译wheel不匹配，跳过（Unsloth 默认走 FlashAttention2/xformers 也能跑）'
+# 不加 -qqq：失败时必须看到真实报错原因（哪个约束不满足/哪个wheel找不到），
+# 不能被静默吞掉，否则等真正需要flash-attn加速时才发现没装上，还得回头排查
+FLASH_ATTN_LOG=$(mktemp)
+FLASH_ATTN_STATUS="✅ 已安装"
+if uv pip install --system -i "$PYPI_MIRROR" flash-attn --no-build-isolation > "$FLASH_ATTN_LOG" 2>&1; then
+    echo "flash-attn 安装成功"
+else
+    FLASH_ATTN_STATUS="⚠️ 安装失败（不影响主流程，Unsloth会退回FlashAttention2/xformers）"
+    echo "⚠️⚠️ flash-attn 安装失败，完整报错如下："
+    cat "$FLASH_ATTN_LOG"
+fi
+rm -f "$FLASH_ATTN_LOG"
 
+echo
+echo "========== 安装总结 =========="
+python3 -c "
+import torch
+print(f'torch:            {torch.__version__} (cuda build: {torch.version.cuda}, cuda_available: {torch.cuda.is_available()})')
+try:
+    import transformers
+    print(f'transformers:     {transformers.__version__}')
+except Exception as e:
+    print(f'transformers:     ⚠️ 导入失败 ({e})')
+try:
+    import vllm
+    print(f'vllm:             {vllm.__version__}')
+except Exception as e:
+    print(f'vllm:             ⚠️ 导入失败 ({e})')
+try:
+    import unsloth
+    print(f'unsloth:          导入成功')
+except Exception as e:
+    print(f'unsloth:          ⚠️ 导入失败 ({e})（无卡模式下这里必然失败，属于预期，挂卡后再验证）')
+"
+echo "flash-attn:       $FLASH_ATTN_STATUS"
+echo "PyPI镜像:          $PYPI_MIRROR"
+echo "HF_ENDPOINT:      $HF_ENDPOINT"
+echo "==============================="
 echo '=== 全部完成 ==='

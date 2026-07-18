@@ -39,6 +39,8 @@ TRAIN_BATCH_SIZE = int(os.environ.get("TRAIN_BATCH_SIZE", "2"))
 # 单条序列长度 = prompt + completion，跟 train_grpo_benchmark.py 默认配置对齐，保证可比
 SEQ_LENGTH = int(os.environ.get("SEQ_LENGTH", str(512 + 1024)))
 BENCHMARK_STEPS = int(os.environ.get("BENCHMARK_STEPS", "3"))
+# 默认True（单卡训练+推理合一场景）；测"专职训练卡"场景（这张卡以后不跑vLLM）就设LOAD_VLLM_ENGINE=0
+LOAD_VLLM_ENGINE = os.environ.get("LOAD_VLLM_ENGINE", "1") == "1"
 
 _memory_snapshots = {}
 
@@ -65,21 +67,24 @@ def main():
     from unsloth import FastLanguageModel
 
     print(f"[config] gpu_tag={GPU_TAG} rank={LORA_RANK} train_batch_size={TRAIN_BATCH_SIZE} "
-          f"seq_length={SEQ_LENGTH} benchmark_steps={BENCHMARK_STEPS}")
+          f"seq_length={SEQ_LENGTH} benchmark_steps={BENCHMARK_STEPS} load_vllm_engine={LOAD_VLLM_ENGINE} "
+          f"training_kernels=unsloth（forward/backward全程走FastLanguageModel patch过的Triton kernel，"
+          f"跟是否使用真实数据/是否调用生成无关）")
 
     snapshot_memory("00_before_load")
 
-    # 关键：fast_inference=True，vLLM引擎照常加载、KV cache照常预留——
-    # 这样显存基线才是"真实GRPO训练流程里vLLM常驻时"的基线，不是"假装没有vLLM"的乐观数字
+    # LOAD_VLLM_ENGINE 对应两种不同的部署场景，没有绝对"更真实"的一方，取决于测的是哪种：
+    #   True  —— 单卡训练+推理都在一起（vLLM全程占着显存），测"这种部署下训练还能用多大batch"
+    #   False —— 专职训练卡（这张卡以后永远不跑vLLM），测"这种部署下训练能用多大batch"
     model, tokenizer = FastLanguageModel.from_pretrained(
         model_name=MODEL_PATH,
         max_seq_length=SEQ_LENGTH,
         load_in_4bit=False,
-        fast_inference=True,
+        fast_inference=LOAD_VLLM_ENGINE,
         max_lora_rank=max(LORA_RANK, 8),
         gpu_memory_utilization=0.6,
     )
-    snapshot_memory("01_after_base_model_load_with_vllm_engine")  # 含vLLM KV cache预留
+    snapshot_memory("01_after_base_model_load" + ("_with_vllm_engine" if LOAD_VLLM_ENGINE else "_no_vllm"))
 
     model = FastLanguageModel.get_peft_model(
         model,
@@ -153,7 +158,9 @@ def main():
             "lora_rank": LORA_RANK,
             "train_batch_size": TRAIN_BATCH_SIZE,
             "seq_length": SEQ_LENGTH,
-            "vllm_engine_loaded": True,
+            "vllm_engine_loaded": LOAD_VLLM_ENGINE,
+            "training_kernels": "unsloth",  # forward/backward全程用Unsloth patch过的Triton kernel（跟输入是否真实/是否生成无关）
+            "input_data": "real_dataset_prompts",  # 2026-07-19起改用真实数据而非随机token
         },
         "avg_steady_state_seconds": avg_step,
         "memory_snapshots_gb": _memory_snapshots,

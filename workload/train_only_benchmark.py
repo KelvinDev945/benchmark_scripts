@@ -7,12 +7,14 @@ size会比真实情况乐观，因为真实流程里显存本来就被vLLM占掉
 
 跟GRPOTrainer解耦：不走生成-打分-算advantage这套真实rollout流程（那部分交给
 train_grpo_benchmark.py测，这里只关心"给定一个固定形状的batch，forward+backward+
-optimizer.step()要多少显存/多久"），用假数据直接构造一个batch跑标准训练step，
-避免依赖TRL内部生成方法的接口（不同版本方法名/返回结构不稳定，之前patch_trainer_timing
-已经踩过这个坑）。
+optimizer.step()要多少显存/多久"）——但跳过生成不等于用随机假token：Unsloth的kernel
+优化虽然对输入内容无关都生效，真实token的分布/padding模式才更贴近实际训练场景，
+所以这里用DATA_PATH里真实的prompt文本构造batch（跳过的只是"生成completion"这一步，
+不是"用什么当输入"），避免依赖TRL内部生成方法的接口（不同版本方法名/返回结构不稳定，
+之前patch_trainer_timing已经踩过这个坑）。
 
 用法：
-  MODEL_PATH=... TRAIN_BATCH_SIZE=4 python3 train_only_benchmark.py
+  MODEL_PATH=... DATA_PATH=... TRAIN_BATCH_SIZE=4 python3 train_only_benchmark.py
 """
 
 import os
@@ -23,6 +25,10 @@ import sys
 sys.stdout.reconfigure(line_buffering=True)
 
 MODEL_PATH = os.environ.get("MODEL_PATH", "/root/rivermind-data/models/DeepSeek-R1-Distill-Qwen-1.5B")
+DATA_PATH = os.environ.get(
+    "DATA_PATH",
+    "/root/rivermind-data/datasets/DAPO-Math-17k-Processed/en/train-00000-of-00001.parquet",
+)
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/root/rivermind-data/outputs/benchmark_run")
 GPU_TAG = os.environ.get("GPU_TAG", "unknown_gpu")
 
@@ -89,14 +95,28 @@ def main():
         [p for p in model.parameters() if p.requires_grad], lr=LEARNING_RATE
     )
 
-    # 假数据：不经过vLLM生成，也不经过GRPOTrainer的reward/advantage计算，
-    # 直接构造固定形状的input_ids + labels，模拟"这一个batch的forward+backward要花多少资源"
-    vocab_size = model.config.vocab_size
-    dummy_input_ids = torch.randint(
-        0, vocab_size, (TRAIN_BATCH_SIZE, SEQ_LENGTH), device="cuda", dtype=torch.long
+    # 真实数据：跳过的是"vLLM生成completion"这一步和GRPOTrainer的reward/advantage计算，
+    # 不是"用什么当输入"——用DATA_PATH里真实的prompt文本tokenize后构造batch，padding/截断到
+    # SEQ_LENGTH，token分布/padding模式比纯随机token更贴近真实训练场景（Unsloth的kernel优化
+    # 本身跟输入内容无关，两种数据实测出的显存/耗时应该接近，但真实数据更有说服力）
+    from datasets import load_dataset
+    raw_dataset = load_dataset("parquet", data_files=DATA_PATH, split="train")
+    real_prompts = [raw_dataset[i]["prompt"] for i in range(min(TRAIN_BATCH_SIZE, len(raw_dataset)))]
+    while len(real_prompts) < TRAIN_BATCH_SIZE:  # 数据不够就循环复用，只是要凑够batch形状
+        real_prompts.append(real_prompts[len(real_prompts) % len(raw_dataset)])
+
+    encoded = tokenizer(
+        real_prompts,
+        return_tensors="pt",
+        padding="max_length",
+        truncation=True,
+        max_length=SEQ_LENGTH,
     )
-    dummy_labels = dummy_input_ids.clone()
-    dummy_attention_mask = torch.ones_like(dummy_input_ids)
+    real_input_ids = encoded["input_ids"].to("cuda")
+    real_attention_mask = encoded["attention_mask"].to("cuda")
+    # 没有真实completion（跳过了生成），直接用同一段token当labels——语义上不是真正的
+    # GRPO loss，但forward+backward要走的计算图/显存分配跟真实训练一致，够用于这个benchmark
+    real_labels = real_input_ids.clone()
 
     snapshot_memory("03_before_first_step")
 
@@ -107,9 +127,9 @@ def main():
         t0 = time.perf_counter()
 
         outputs = model(
-            input_ids=dummy_input_ids,
-            attention_mask=dummy_attention_mask,
-            labels=dummy_labels,
+            input_ids=real_input_ids,
+            attention_mask=real_attention_mask,
+            labels=real_labels,
         )
         loss = outputs.loss
         loss.backward()

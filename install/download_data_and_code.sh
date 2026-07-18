@@ -23,33 +23,28 @@ if ! python3 -c "import modelscope" >/dev/null 2>&1; then
     uv pip install --system -qqq -i "$PYPI_MIRROR" modelscope huggingface_hub
 fi
 
-if [ ! -d "$DATA_DIR/models/DeepSeek-R1-Distill-Qwen-1.5B" ]; then
-    # 模型优先走ModelScope（国内更快），找不到退回HF镜像($HF_ENDPOINT)
-    if [ "$PREFER_MODELSCOPE_FOR_MODELS" = true ] && python3 -c "
+# 注意：不用"目录存不存在"判断要不要下载——目录存在不代表下载完整了（比如中途被打断，
+# 会留下 *.incomplete 文件）。snapshot_download 本身就是幂等+可续传的：已完整的文件会
+# 秒过，没下完/缺失的会自动续传，所以每次都直接调用它，不用自己维护完成状态。
+echo "下载模型（优先 ModelScope，国内更快，找不到退回 huggingface_hub 经 $HF_ENDPOINT 镜像）..."
+if [ "$PREFER_MODELSCOPE_FOR_MODELS" = true ] && python3 -c "
 from modelscope import snapshot_download
 snapshot_download('deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B', local_dir='$DATA_DIR/models/DeepSeek-R1-Distill-Qwen-1.5B')
 "; then
-        echo "模型已通过 ModelScope 下载完成"
-    else
-        echo "ModelScope 下载失败/未启用，改走 huggingface_hub（经 $HF_ENDPOINT 镜像）"
-        python3 -c "
+    echo "模型已通过 ModelScope 下载/校验完成"
+else
+    echo "ModelScope 下载失败/未启用，改走 huggingface_hub（经 $HF_ENDPOINT 镜像）"
+    python3 -c "
 from huggingface_hub import snapshot_download
 snapshot_download(repo_id='deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B', local_dir='$DATA_DIR/models/DeepSeek-R1-Distill-Qwen-1.5B')
 "
-    fi
-else
-    echo "模型已存在，跳过"
 fi
 
-if [ ! -d "$DATA_DIR/datasets/DAPO-Math-17k-Processed" ]; then
-    # ModelScope上没有这个数据集镜像，走 huggingface_hub（经 $HF_ENDPOINT 镜像）
-    python3 -c "
+echo "下载训练数据集（ModelScope上没有镜像，走 huggingface_hub 经 $HF_ENDPOINT 镜像）..."
+python3 -c "
 from huggingface_hub import snapshot_download
 snapshot_download(repo_id='open-r1/DAPO-Math-17k-Processed', repo_type='dataset', local_dir='$DATA_DIR/datasets/DAPO-Math-17k-Processed')
 "
-else
-    echo "数据集已存在，跳过"
-fi
 
 if [ ! -d "$DATA_DIR/JustRL" ]; then
     # 先测GitHub直连，不通则走代理（每台实例网络环境不一样，不能假设一致）

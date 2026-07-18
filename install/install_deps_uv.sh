@@ -6,7 +6,17 @@
 set -e
 
 echo '=== 1. 安装/升级 uv ==='
-pip install --upgrade -qqq uv
+# 有些精简镜像（比如 fj01 新实例）连 pip 都没有，不能假设 pip 一定存在。
+# 优先用 uv 官方独立安装脚本（不依赖pip），失败了再退回 pip 安装。
+if command -v uv >/dev/null 2>&1; then
+    echo "uv 已存在: $(uv --version)"
+elif curl -LsSf https://astral.sh/uv/install.sh | sh 2>&1 | tail -5; then
+    export PATH="$HOME/.local/bin:$PATH"
+    grep -q '.local/bin' ~/.bashrc 2>/dev/null || echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.bashrc
+else
+    echo "独立安装脚本失败，退回 pip 安装 uv（需要 pip 已存在）"
+    pip install --upgrade -qqq uv
+fi
 
 echo '=== 2. 探测是否 Tesla T4（老架构，vllm/triton 版本要求不同） ==='
 IS_T4=false

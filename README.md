@@ -12,7 +12,8 @@
 ```
 benchmark_scripts/
 ├── install/
-│   └── install_deps_uv.sh          # 用 uv 一次性装好 torch/transformers/vllm/unsloth 等
+│   ├── install_deps_uv.sh          # 用 uv 一次性装好 torch/transformers/vllm/unsloth 等
+│   └── download_data_and_code.sh   # 下载base模型/训练数据集/JustRL评测代码，无卡(CPU)阶段就能跑
 ├── hardware/
 │   ├── run_gpu_burn.sh             # Tensor Core 算力压测
 │   └── run_nvbandwidth.sh          # 显存内带宽 + PCIe 带宽测试
@@ -35,6 +36,11 @@ benchmark_scripts/
 ## 快速开始
 
 ```bash
+# 无卡(CPU)阶段就能做——省挂卡计费时间
+export DATA_DIR="/root/rivermind-data"
+bash install/download_data_and_code.sh
+
+# 挂卡后再装python依赖（unsloth import需要真实GPU）
 bash install/install_deps_uv.sh
 
 export GPU_TAG="rtx4090"   # 每台机器/每张卡换一下这个标签，用于区分产出文件

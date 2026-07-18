@@ -23,9 +23,17 @@ fi
 # vllm 0.19.1 + unsloth 2026.7.3），阻止解析器做这种荒谬的回退。
 UNSLOTH_PKG="unsloth==2026.7.3"
 
-# 有些基础镜像（比如 2.9.0-cuda12.8 系列）已经预装了满足Unsloth约束(torch<2.11.0,>=2.4.0)、
-# 且CUDA tag对得上驱动的torch——这种情况不加 --upgrade，避免uv为了其他包的依赖声明
-# 把已经装好、CUDA tag匹配的torch意外换掉（2026-07-17 hn01上 pip install vllm 就是这么把
+# torch 目标锁定在 2.8.x（而不是Unsloth约束允许的整个<2.11.0区间）——原因：
+# flash-attn 官方预编译wheel矩阵（GitHub Releases）目前只覆盖到 cu12+torch2.8，
+# torch2.9+ 只有cu13的wheel、torch2.10完全没有对应wheel。2026-07-18在fj01上实测：
+# 装torch2.10后flash-attn没有匹配wheel，被迫从源码编译，光编译就要烧半小时以上
+# CPU时间（大量模板化CUDA kernel）。锁定2.8.x能让 install_flash_attn.sh 直接装
+# 预编译wheel，几秒钟装完，不用再编译。
+TORCH_CONSTRAINT='torch<2.9.0,>=2.8.0'
+
+# 有些基础镜像（比如 2.8.0-cuda12.8 系列）已经预装了满足这个约束、且CUDA tag对得上
+# 驱动的torch——这种情况不加 --upgrade，避免uv为了其他包的依赖声明把已经装好、
+# CUDA tag匹配的torch意外换掉（2026-07-17 hn01上 pip install vllm 就是这么把
 # torch从cu128换成cu130、弄坏torchaudio的）
 SKIP_TORCH_REINSTALL=false
 if python3 -c "
@@ -36,7 +44,7 @@ except ImportError:
     sys.exit(1)
 from packaging.version import Version
 v = Version(torch.__version__.split('+')[0])
-sys.exit(0 if (Version('2.4.0') <= v < Version('2.11.0')) else 1)
+sys.exit(0 if (Version('2.8.0') <= v < Version('2.9.0')) else 1)
 " 2>/dev/null; then
     SKIP_TORCH_REINSTALL=true
     echo "基础镜像自带 torch $(python3 -c 'import torch; print(torch.__version__)') 已满足约束，跳过重装"
@@ -51,7 +59,7 @@ if [ "$SKIP_TORCH_REINSTALL" = true ]; then
         modelscope huggingface_hub wandb gpustat
 else
     uv pip install --system -qqq -i "$PYPI_MIRROR" --upgrade \
-        'torch<2.11.0,>=2.4.0' 'transformers<=5.5.0,>=4.51.3' "$VLLM_PKG" "$UNSLOTH_PKG" \
+        "$TORCH_CONSTRAINT" 'transformers<=5.5.0,>=4.51.3' "$VLLM_PKG" "$UNSLOTH_PKG" \
         trl peft accelerate bitsandbytes xformers torchvision numpy pillow \
         modelscope huggingface_hub wandb gpustat
 fi

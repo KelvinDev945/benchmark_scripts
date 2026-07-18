@@ -63,11 +63,15 @@ benchmark_scripts/
 
 ## 环境要求
 
-- Unsloth 当前最新版本（2026.7.3）声明的依赖约束：`torch<2.11.0,>=2.4.0`、
-  `transformers<=5.5.0,>=4.51.3`——`install_python_deps.sh` 已按这个约束一次性装好，
-  不要分多次单独 `pip/uv install` 某个包，否则依赖解析器看不到全局约束，
-  容易把 torch/transformers 静默升级到不兼容版本（2026-07-17 在 hn01 上踩过这个坑）。
-- Python 3.12（已验证）。
+- Unsloth 当前最新版本（2026.7.3）声明的依赖约束是 `torch<2.11.0,>=2.4.0`，但
+  `install_python_deps.sh` 实际把 torch 锁定在更窄的 **`torch<2.9.0,>=2.8.0`**——
+  原因是 flash-attn 官方预编译wheel矩阵目前只覆盖到 `cu12+torch2.8`（torch2.9只有
+  cu13的wheel，torch2.10完全没有），锁在2.8.x能让 `install_flash_attn.sh` 直接装
+  预编译wheel（几秒钟），不用从源码编译（2026-07-18在fj01上实测：torch2.10时
+  flash-attn编译耗时30分钟以上）。基础镜像自带的torch如果已经在这个区间内会跳过重装。
+  不要分多次单独 `pip/uv install` 某个包，否则依赖解析器看不到全局约束，容易把
+  torch/transformers 静默升级到不兼容版本（2026-07-17 在 hn01 上踩过这个坑）。
+- Python 3.11/3.12（均已验证，`install_flash_attn.sh`会自动探测python版本拼预编译wheel文件名）。
 
 ## 快速开始
 

@@ -15,6 +15,9 @@ import subprocess
 import sys
 import json
 
+# 重定向到文件跑的时候（nohup ... > log.txt），Python默认全缓冲，进程没退出就看不到进度
+sys.stdout.reconfigure(line_buffering=True)
+
 MODEL_PATH = os.environ.get("MODEL_PATH", "/root/rivermind-data/models/DeepSeek-R1-Distill-Qwen-1.5B")
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/root/rivermind-data/outputs/benchmark_run")
 GPU_TAG = os.environ.get("GPU_TAG", "unknown_gpu")

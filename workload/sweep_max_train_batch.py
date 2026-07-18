@@ -15,6 +15,11 @@ import subprocess
 import sys
 import json
 
+# 重定向到文件跑的时候（nohup ... > log.txt），Python默认全缓冲，看不到实时进度，
+# 直到进程退出才一次性写入。这里强制无缓冲，配合下面用 sys.executable 重新起子进程时
+# 也传 -u，两层都不缓冲。
+sys.stdout.reconfigure(line_buffering=True)
+
 MODEL_PATH = os.environ.get("MODEL_PATH", "/root/rivermind-data/models/DeepSeek-R1-Distill-Qwen-1.5B")
 DATA_PATH = os.environ.get(
     "DATA_PATH",

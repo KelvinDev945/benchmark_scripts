@@ -3,6 +3,11 @@
 # 用法：./run_gpu_burn.sh [压测时长秒数，默认180]
 set -e
 
+# 编译gpu-burn需要CUDA头文件(cublas_v2.h等)，靠sources.sh自动探测持久化CUDA Toolkit
+# 并接进PATH/CUDA_HOME——如果之前没跑过 install/download_cuda_toolkit.sh 装nvcc，
+# 这里会编译失败，需要先 INSTALL_CUDA_TOOLKIT=1 bash install/download_cuda_toolkit.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../install/sources.sh"
+
 # 工具本身(clone+编译产物)和结果都放持久化数据盘（DATA_DIR），不放 $HOME/github 或 /tmp——
 # 那些路径都在根分区，是临时的，实例释放/重启就没了，得重新clone+编译
 # （详见持久记忆 feedback_gpu_rental_persistent_data_disk）

@@ -34,11 +34,13 @@ GRAD_ACCUM = int(os.environ.get("GRAD_ACCUM", "4"))
 USE_FP8 = os.environ.get("USE_FP8", "0") == "1"
 BENCHMARK_STEPS = int(os.environ.get("BENCHMARK_STEPS", "10"))
 
-_USE_VLLM_ENV = os.environ.get("USE_VLLM", "auto")
-if _USE_VLLM_ENV == "auto":
-    USE_VLLM = LORA_RANK >= 8
-else:
-    USE_VLLM = _USE_VLLM_ENV == "1"
+# 早期在 hn01 上发现 rank<8 时 vLLM 的 LoRA serving kernel 会崩溃（IndexError @
+# column_parallel_linear.py set_lora()），当时用"rank<8就关vLLM"来规避。后来查明根因其实是
+# torch/transformers 版本超出 Unsloth 支持范围（不是rank本身的问题），重装成正确版本组合
+# （torch<2.11.0 + transformers<=5.5.0，跟 install_python_deps.sh 锁定的约束一致）后，
+# rank=1 + vLLM快速路径 5步实测全部跑通，无崩溃。所以默认rank=1也默认开vLLM，
+# 不再对低rank做保守降级；如果环境版本组合有问题需要临时规避，用 USE_VLLM=0 强制关闭。
+USE_VLLM = os.environ.get("USE_VLLM", "1") == "1"
 
 EPSILON_LOW = 0.2
 EPSILON_HIGH = 0.28

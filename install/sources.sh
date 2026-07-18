@@ -39,13 +39,30 @@ export UV_CACHE_DIR="${UV_CACHE_DIR:-$_SOURCES_DATA_DIR/.cache/uv}"
 export PIP_CACHE_DIR="${PIP_CACHE_DIR:-$_SOURCES_DATA_DIR/.cache/pip}"
 mkdir -p "$UV_CACHE_DIR" "$PIP_CACHE_DIR"
 
+# ---- CUDA Toolkit（可选，装到持久化数据盘的话，重置后自动可用，不用重装）----
+# 如果之前跑过 download_cuda_toolkit.sh（INSTALL_CUDA_TOOLKIT=1），nvcc 会装在
+# $DATA_DIR/cuda-toolkit（持久化，跨容器重置存活）。这里自动探测，装了就接进PATH/CUDA_HOME，
+# 没装就跳过——不需要每次都手动设置，也不会因为没装而报错
+_CUDA_TOOLKIT_PATH="$_SOURCES_DATA_DIR/cuda-toolkit"
+if [ -x "$_CUDA_TOOLKIT_PATH/bin/nvcc" ]; then
+    export CUDA_HOME="$_CUDA_TOOLKIT_PATH"
+    export PATH="$_CUDA_TOOLKIT_PATH/bin:$PATH"
+    export LD_LIBRARY_PATH="$_CUDA_TOOLKIT_PATH/lib64:$LD_LIBRARY_PATH"
+fi
+
 echo "[sources] PYPI_MIRROR=$PYPI_MIRROR"
 echo "[sources] HF_ENDPOINT=$HF_ENDPOINT (HF_HUB_DISABLE_XET=$HF_HUB_DISABLE_XET)"
 echo "[sources] GITHUB_PROXY_PREFIX=$GITHUB_PROXY_PREFIX (仅在直连不可用时使用)"
 echo "[sources] PREFER_MODELSCOPE_FOR_MODELS=$PREFER_MODELSCOPE_FOR_MODELS"
 echo "[sources] UV_CACHE_DIR=$UV_CACHE_DIR | PIP_CACHE_DIR=$PIP_CACHE_DIR（持久化数据盘，跨容器重置存活）"
+if [ -n "${CUDA_HOME:-}" ]; then
+    echo "[sources] 检测到持久化CUDA Toolkit: CUDA_HOME=$CUDA_HOME"
+else
+    echo "[sources] 未检测到持久化CUDA Toolkit（未装，或还没跑 download_cuda_toolkit.sh）"
+fi
 
-# 持久化到 ~/.bashrc，后续新开 shell 也生效（不重复追加）
+# 持久化到 ~/.bashrc，后续新开 shell 也生效（不重复追加）——注意 ~/.bashrc 本身在根分区，
+# 容器重置会被清空，所以这里每次 source sources.sh 都会重新写一遍，不依赖它跨重置存活
 for line in \
     "export HF_ENDPOINT=$HF_ENDPOINT" \
     "export HF_HUB_DISABLE_XET=$HF_HUB_DISABLE_XET" \
@@ -54,3 +71,12 @@ for line in \
 do
     grep -qF "$line" ~/.bashrc 2>/dev/null || echo "$line" >> ~/.bashrc
 done
+if [ -n "${CUDA_HOME:-}" ]; then
+    for line in \
+        "export CUDA_HOME=$CUDA_HOME" \
+        "export PATH=$_CUDA_TOOLKIT_PATH/bin:\$PATH" \
+        "export LD_LIBRARY_PATH=$_CUDA_TOOLKIT_PATH/lib64:\$LD_LIBRARY_PATH"
+    do
+        grep -qF "$line" ~/.bashrc 2>/dev/null || echo "$line" >> ~/.bashrc
+    done
+fi

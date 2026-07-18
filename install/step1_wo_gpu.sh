@@ -6,11 +6,14 @@
 set -e
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-echo "===== [1/2] download_data_and_code.sh ====="
+echo "===== [1/3] download_data_and_code.sh ====="
 bash download_data_and_code.sh
 
-echo "===== [2/2] install_python_deps.sh ====="
+echo "===== [2/3] install_python_deps.sh ====="
 bash install_python_deps.sh
+
+echo "===== [3/3] download_cuda_toolkit.sh（默认装nvcc，INSTALL_CUDA_TOOLKIT=0 可跳过） ====="
+bash download_cuda_toolkit.sh
 
 echo
 echo "========== Step 1 [wo GPU] 全部完成 =========="

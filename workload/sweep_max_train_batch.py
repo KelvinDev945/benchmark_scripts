@@ -66,30 +66,48 @@ def try_batch_size(batch_size):
 def main():
     print(f"[config] gpu_tag={GPU_TAG} sweep_range=[{SWEEP_START}, {SWEEP_MAX}]")
 
-    # 第一步：指数扩大找到"第一个失败点"的上界（避免线性扫描从1开始每个都试太慢）
-    last_success = None
-    bs = SWEEP_START
-    first_fail = None
-    while bs <= SWEEP_MAX:
-        ok, _ = try_batch_size(bs)
-        if ok:
-            last_success = bs
-            bs *= 2
+    # 起点不再固定从1开始——SWEEP_START可以设成"已知在更短长度下测出的上限"这类先验值，
+    # 直接从那附近起跳：成功就翻倍往上探（找上界），失败就往下探（从1开始指数逼近，
+    # 找一个比SWEEP_START小的成功点），避免从1挨个试造成的浪费。
+    ok, _ = try_batch_size(SWEEP_START)
+    if ok:
+        last_success = SWEEP_START
+        first_fail = None
+        bs = SWEEP_START * 2
+        while bs <= SWEEP_MAX:
+            ok, _ = try_batch_size(bs)
+            if ok:
+                last_success = bs
+                bs *= 2
+            else:
+                first_fail = bs
+                break
         else:
-            first_fail = bs
-            break
+            print(f"[sweep] 到达上限 SWEEP_MAX={SWEEP_MAX} 仍未失败，这张卡撑得住的batch size比预设上限还大，"
+                  f"建议调大 SWEEP_MAX 重新跑一次以找到真正的上限")
     else:
-        print(f"[sweep] 到达上限 SWEEP_MAX={SWEEP_MAX} 仍未失败，这张卡撑得住的batch size比预设上限还大，"
-              f"建议调大 SWEEP_MAX 重新跑一次以找到真正的上限")
+        # SWEEP_START本身就失败——说明真实上限比它小，回退到从1开始指数扩大，
+        # 直到找到比SWEEP_START更小的失败点为止
+        last_success = None
+        first_fail = SWEEP_START
+        bs = 1
+        while bs < SWEEP_START:
+            ok2, _ = try_batch_size(bs)
+            if ok2:
+                last_success = bs
+                bs *= 2
+            else:
+                first_fail = bs
+                break
 
     if first_fail is None:
         # 没触发失败，说明 last_success 就是能测到的上限（不代表绝对最大值）
         result = {"gpu_tag": GPU_TAG, "max_working_batch_size": last_success,
                   "note": f"在SWEEP_MAX={SWEEP_MAX}范围内没有失败，真实上限可能更大"}
     elif last_success is None:
-        # 连SWEEP_START都装不下
+        # 连1都装不下
         result = {"gpu_tag": GPU_TAG, "max_working_batch_size": 0,
-                  "note": f"连最小的SWEEP_START={SWEEP_START}都OOM，这张卡在当前配置下训不了"}
+                  "note": "连 batch_size=1 都OOM，这张卡在当前配置下训不了"}
     else:
         # 第二步：在 (last_success, first_fail) 之间二分查找精确边界
         lo, hi = last_success, first_fail

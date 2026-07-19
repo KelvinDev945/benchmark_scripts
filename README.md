@@ -55,8 +55,14 @@ benchmark_scripts/
 │   └── run_nvbandwidth.sh            # 显存内带宽 + PCIe 带宽测试
 ├── workload/                         # Step 3，需要挂卡
 │   ├── train_grpo_benchmark.py       # GRPO训练：耗时拆分(generate vs backward)+显存快照
-│   ├── vllm_throughput_benchmark.py  # 独立于训练循环的纯vLLM推理吞吐测试
-│   └── train_grpo_reference.py       # 原始生产训练脚本（未插桩），仅作对照参考
+│   ├── train_only_benchmark.py       # 纯训练(forward+backward+optimizer)显存/耗时快照，vLLM是否常驻可配置
+│   ├── vllm_throughput_benchmark.py  # 独立于训练循环的纯vLLM推理吞吐+显存测试
+│   ├── train_grpo_reference.py       # 原始生产训练脚本（未插桩），仅作对照参考
+│   ├── sweep_max_train_batch.py      # 二分查找最大可用TRAIN_BATCH_SIZE，带显存护栏(默认80%显存即停)
+│   ├── sweep_max_inference_length.py # 二分查找最大可用推理长度(max_new_tokens)
+│   └── sweep_seqlen_train_batch.sh   # 对一组SEQ_LENGTH依次跑sweep_max_train_batch.py，复用上一轮上限加速
+├── tools/
+│   └── status.sh                     # 一键状态速览：GPU占用+运行中进程+最近日志尾部+最新结果json，通用(路径走DATA_DIR)
 └── results/
     └── record_template.md            # 结果记录表 + 跑法速查
 ```

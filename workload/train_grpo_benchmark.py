@@ -45,10 +45,11 @@ GRAD_ACCUM = int(os.environ.get("GRAD_ACCUM", "4"))
 # 让同一批采样数据被重复用于多轮训练更新，而不是采一次只更新一次——采样频率降低，
 # 训练/采样的资源争抢自然缓解。ModelScope SWIFT团队实测：从1提到4整体训练耗时减半，
 # 且≤4基本不影响训练效果；跨框架benchmark也显示同样是TRL，mu=4比mu=1快一倍多。
-# 对应TRL grpo_trainer.py源码里的 generate_every = steps_per_generation × num_iterations，
-# 是目前发现的、不用换框架/不用改架构就能拿到的最大免费加速点之一，默认先设4验证效果。
-# 见 obsidian GRPO工程优化.md
-NUM_ITERATIONS = int(os.environ.get("NUM_ITERATIONS", "4"))
+# 对应TRL grpo_trainer.py源码里的 generate_every = steps_per_generation × num_iterations。
+# ⚠️ 2026-07-19：这个数字本项目自己还没做过对照实验验证，默认值先保守设回TRL原生的1，
+# 不要在没验证之前默认开4影响正式训练——想测试时手动设 NUM_ITERATIONS=4 环境变量即可，
+# 详见 obsidian GRPO工程优化.md 待办
+NUM_ITERATIONS = int(os.environ.get("NUM_ITERATIONS", "1"))
 USE_FP8 = os.environ.get("USE_FP8", "0") == "1"
 BENCHMARK_STEPS = int(os.environ.get("BENCHMARK_STEPS", "10"))
 

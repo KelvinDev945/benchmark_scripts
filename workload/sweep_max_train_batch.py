@@ -147,9 +147,15 @@ def try_batch_size(batch_size):
               f"训练本身视为成功")
     print(f"[sweep] batch_size={batch_size} 成功")
 
-    # 跟显卡总显存比一下，判断要不要触发护栏
+    # 跟显卡总显存比一下，判断要不要触发护栏。MEMORY_METRIC_FIELD 先按根级字段找
+    # （比如 train_grpo_benchmark.py 用后台线程轮询nvidia-smi全程追踪到的真实峰值
+    # nvidia_smi_peak_used_gb，就直接放在结果json根层级），找不到再退回嵌套在
+    # memory_snapshots_gb[MEMORY_SNAPSHOT_TAG]下面那种旧格式（train_only_benchmark.py）
     try:
-        peak_gb = result_json["memory_snapshots_gb"][MEMORY_SNAPSHOT_TAG][MEMORY_METRIC_FIELD]
+        if MEMORY_METRIC_FIELD in result_json:
+            peak_gb = result_json[MEMORY_METRIC_FIELD]
+        else:
+            peak_gb = result_json["memory_snapshots_gb"][MEMORY_SNAPSHOT_TAG][MEMORY_METRIC_FIELD]
         ratio = peak_gb / GPU_TOTAL_MEMORY_GB
         print(f"[sweep] batch_size={batch_size} 训练后峰值显存 {peak_gb:.2f}GB / "
               f"总显存 {GPU_TOTAL_MEMORY_GB:.2f}GB = {ratio:.1%}")
@@ -158,8 +164,7 @@ def try_batch_size(batch_size):
                   f"停止继续探测更大的batch size，把 {batch_size} 作为保守上限")
             raise MemoryGuardTriggered(batch_size, ratio, peak_gb)
     except KeyError as e:
-        print(f"[sweep] 警告：结果json里没有 {MEMORY_SNAPSHOT_TAG}.{MEMORY_METRIC_FIELD} 这个字段"
-              f"（{e}），跳过护栏检查")
+        print(f"[sweep] 警告：结果json里没有 {MEMORY_METRIC_FIELD} 这个字段（{e}），跳过护栏检查")
 
     return True, tail
 

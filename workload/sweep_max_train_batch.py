@@ -19,7 +19,9 @@
 train_grpo_benchmark.py（真实GRPO训练+推理耦合场景）：
   TARGET_SCRIPT=train_grpo_benchmark.py RESULT_FILE_PREFIX=benchmark_summary python3 sweep_max_train_batch.py
 两个脚本的显存快照tag名恰好都是"04_after_training_steps"，护栏检查代码不用改；
-如果以后接入的脚本tag名不同，用 MEMORY_SNAPSHOT_TAG 覆盖。
+如果以后接入的脚本tag名不同，用 MEMORY_SNAPSHOT_TAG 覆盖。跑 train_grpo_benchmark.py
+且开了 UNSLOTH_VLLM_STANDBY 时，额外加 MEMORY_METRIC_FIELD=nvidia_smi_used_gb
+（原因见下方 MEMORY_METRIC_FIELD 的注释）。
 
 显存护栏（2026-07-19新增，用户人工观察到 seq_length=4096/bs=48 时已经吃到22.55GB/24GB
 ——只剩1.5GB余量，继续逼近OOM边界风险不小，且再往上一两档batch带来的收益有限）：
@@ -51,6 +53,11 @@ MEMORY_GUARD_RATIO = float(os.environ.get("MEMORY_GUARD_RATIO", "0.8"))
 TARGET_SCRIPT_NAME = os.environ.get("TARGET_SCRIPT", "train_only_benchmark.py")
 RESULT_FILE_PREFIX = os.environ.get("RESULT_FILE_PREFIX", "train_only_benchmark")
 MEMORY_SNAPSHOT_TAG = os.environ.get("MEMORY_SNAPSHOT_TAG", "04_after_training_steps")
+# 显存护栏读哪个字段——2026-07-19发现 UNSLOTH_VLLM_STANDBY 开启时 torch.cuda 的
+# max_allocated_gb 统计会失真（CuMemAllocator手动unmap/remap绕过了caching allocator正常
+# 记账，实测算出27GB/35GB这种超过物理显存总量的荒谬数字），train_grpo_benchmark.py因此
+# 额外记录了基于nvidia-smi的真实物理占用nvidia_smi_used_gb，standby场景应该用这个
+MEMORY_METRIC_FIELD = os.environ.get("MEMORY_METRIC_FIELD", "max_allocated_gb")
 # 探测阶段跑几步——只是为了看跑不跑得通(OOM/超时与否)，不追求计时精度(精度靠最后的完整
 # 步数确认跑)。真实GRPO耦合场景(train_grpo_benchmark.py)单步耗时可能到几分钟(生成
 # num_generations×train_batch_size条长completion)，2步都可能超时，应该调小到1步。
@@ -112,22 +119,37 @@ def try_batch_size(batch_size):
         tail = ((e.stdout or "") + (e.stderr or ""))[-2000:] if (e.stdout or e.stderr) else "(超时，无可用输出)"
         return False, tail
 
-    success = result.returncode == 0
     tail = (result.stdout + result.stderr)[-2000:]
-    if not success:
+
+    # 2026-07-19发现：开UNSLOTH_VLLM_STANDBY后，进程退出时CuMemAllocator的显存池
+    # 析构偶尔会崩(c10::cuda::MemPool::~MemPool())，导致子进程返回非0退出码——但这个崩溃
+    # 发生在Python解释器收尾阶段，实际的训练/生成步骤早就跑完并把结果json写好了。
+    # 所以不能只看returncode，先看结果json是否存在且完整，这才是"这一步是否真的成功"的
+    # 依据；returncode非0只在json读不到时才当成失败信号用。
+    result_json_path = os.path.join(OUTPUT_DIR, f"{RESULT_FILE_PREFIX}_{GPU_TAG}_sweep_bs{batch_size}.json")
+    result_json = None
+    try:
+        with open(result_json_path) as f:
+            result_json = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+    if result_json is None:
         is_oom = "CUDA out of memory" in tail or "OutOfMemoryError" in tail
         print(f"[sweep] batch_size={batch_size} 失败（{'OOM' if is_oom else '其他错误，见下方日志'}）")
         if not is_oom:
             print(tail)
-        return success, tail
+        return False, tail
 
+    if result.returncode != 0:
+        print(f"[sweep] batch_size={batch_size} 子进程退出码非0(returncode={result.returncode})，"
+              f"但结果json完整存在——判定为进程退出阶段的良性崩溃(如standby模式下的MemPool析构)，"
+              f"训练本身视为成功")
     print(f"[sweep] batch_size={batch_size} 成功")
 
-    # 读刚才那次子进程写的显存快照，跟显卡总显存比一下，判断要不要触发护栏
-    result_json_path = os.path.join(OUTPUT_DIR, f"{RESULT_FILE_PREFIX}_{GPU_TAG}_sweep_bs{batch_size}.json")
+    # 跟显卡总显存比一下，判断要不要触发护栏
     try:
-        with open(result_json_path) as f:
-            peak_gb = json.load(f)["memory_snapshots_gb"][MEMORY_SNAPSHOT_TAG]["max_allocated_gb"]
+        peak_gb = result_json["memory_snapshots_gb"][MEMORY_SNAPSHOT_TAG][MEMORY_METRIC_FIELD]
         ratio = peak_gb / GPU_TOTAL_MEMORY_GB
         print(f"[sweep] batch_size={batch_size} 训练后峰值显存 {peak_gb:.2f}GB / "
               f"总显存 {GPU_TOTAL_MEMORY_GB:.2f}GB = {ratio:.1%}")
@@ -135,10 +157,11 @@ def try_batch_size(batch_size):
             print(f"[sweep] 显存占比已达到护栏阈值 {MEMORY_GUARD_RATIO:.0%}，"
                   f"停止继续探测更大的batch size，把 {batch_size} 作为保守上限")
             raise MemoryGuardTriggered(batch_size, ratio, peak_gb)
-    except (FileNotFoundError, KeyError) as e:
-        print(f"[sweep] 警告：没能读到 batch_size={batch_size} 的显存快照（{e}），跳过护栏检查")
+    except KeyError as e:
+        print(f"[sweep] 警告：结果json里没有 {MEMORY_SNAPSHOT_TAG}.{MEMORY_METRIC_FIELD} 这个字段"
+              f"（{e}），跳过护栏检查")
 
-    return success, tail
+    return True, tail
 
 
 def main():

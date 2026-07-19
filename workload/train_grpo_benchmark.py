@@ -42,6 +42,13 @@ MAX_PROMPT_LENGTH = int(os.environ.get("MAX_PROMPT_LENGTH", "512"))
 MAX_COMPLETION_LENGTH = int(os.environ.get("MAX_COMPLETION_LENGTH", "1024"))
 TRAIN_BATCH_SIZE = int(os.environ.get("TRAIN_BATCH_SIZE", "2"))
 GRAD_ACCUM = int(os.environ.get("GRAD_ACCUM", "4"))
+# 让同一批采样数据被重复用于多轮训练更新，而不是采一次只更新一次——采样频率降低，
+# 训练/采样的资源争抢自然缓解。ModelScope SWIFT团队实测：从1提到4整体训练耗时减半，
+# 且≤4基本不影响训练效果；跨框架benchmark也显示同样是TRL，mu=4比mu=1快一倍多。
+# 对应TRL grpo_trainer.py源码里的 generate_every = steps_per_generation × num_iterations，
+# 是目前发现的、不用换框架/不用改架构就能拿到的最大免费加速点之一，默认先设4验证效果。
+# 见 obsidian GRPO工程优化.md
+NUM_ITERATIONS = int(os.environ.get("NUM_ITERATIONS", "4"))
 USE_FP8 = os.environ.get("USE_FP8", "0") == "1"
 BENCHMARK_STEPS = int(os.environ.get("BENCHMARK_STEPS", "10"))
 
@@ -270,7 +277,8 @@ def main():
 
     print(f"[config] gpu_tag={GPU_TAG} rank={LORA_RANK} num_generations={NUM_GENERATIONS} "
           f"max_completion_length={MAX_COMPLETION_LENGTH} train_batch_size={TRAIN_BATCH_SIZE} "
-          f"grad_accum={GRAD_ACCUM} use_vllm={USE_VLLM} vllm_standby={USE_VLLM_STANDBY and USE_VLLM} "
+          f"grad_accum={GRAD_ACCUM} num_iterations={NUM_ITERATIONS} use_vllm={USE_VLLM} "
+          f"vllm_standby={USE_VLLM_STANDBY and USE_VLLM} "
           f"fp8={USE_FP8} float8_kv_cache={USE_FLOAT8_KV_CACHE} benchmark_steps={BENCHMARK_STEPS}")
 
     global _gpu_peak_poller
@@ -316,6 +324,7 @@ def main():
         learning_rate=LEARNING_RATE,
         per_device_train_batch_size=TRAIN_BATCH_SIZE,
         gradient_accumulation_steps=GRAD_ACCUM,
+        num_iterations=NUM_ITERATIONS,
         num_generations=NUM_GENERATIONS,
         max_prompt_length=MAX_PROMPT_LENGTH,
         max_completion_length=MAX_COMPLETION_LENGTH,
@@ -363,6 +372,7 @@ def main():
             "num_generations": NUM_GENERATIONS,
             "train_batch_size": TRAIN_BATCH_SIZE,
             "grad_accum": GRAD_ACCUM,
+            "num_iterations": NUM_ITERATIONS,
             "effective_batch": TRAIN_BATCH_SIZE * GRAD_ACCUM,
             "max_completion_length": MAX_COMPLETION_LENGTH,
             "use_vllm": USE_VLLM,

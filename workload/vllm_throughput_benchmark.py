@@ -12,6 +12,25 @@ import os
 import time
 import json
 
+_memory_snapshots = {}
+
+
+def snapshot_memory(tag):
+    import torch
+    if not torch.cuda.is_available():
+        return
+    torch.cuda.synchronize()
+    allocated = torch.cuda.memory_allocated() / 1024**3
+    reserved = torch.cuda.memory_reserved() / 1024**3
+    max_allocated = torch.cuda.max_memory_allocated() / 1024**3
+    _memory_snapshots[tag] = {
+        "allocated_gb": round(allocated, 3),
+        "reserved_gb": round(reserved, 3),
+        "max_allocated_gb": round(max_allocated, 3),
+    }
+    print(f"[memory] {tag}: allocated={allocated:.2f}GB reserved={reserved:.2f}GB "
+          f"max_allocated={max_allocated:.2f}GB")
+
 # 默认路径全部落在 /root/rivermind-data —— 持久化数据盘，不是根分区，实例释放/重启不会丢
 # （详见持久记忆 feedback_gpu_rental_persistent_data_disk / obsidian 环境与框架.md）
 MODEL_PATH = os.environ.get("MODEL_PATH", "/root/rivermind-data/models/DeepSeek-R1-Distill-Qwen-1.5B")
@@ -37,6 +56,8 @@ def main():
     print(f"[config] gpu_tag={GPU_TAG} model={MODEL_PATH} lora_path={LORA_PATH or '(none)'} "
           f"num_prompts={NUM_PROMPTS} max_new_tokens={MAX_NEW_TOKENS}")
 
+    snapshot_memory("00_before_load")
+
     # max_seq_length 要跟着 MAX_NEW_TOKENS 放大（+512给prompt留余量），否则扫描更长
     # 长度时会被这里的硬上限提前截断/拒绝，而不是真的测到显存OOM的那个边界
     max_seq_length = MAX_NEW_TOKENS + 512
@@ -48,11 +69,13 @@ def main():
         max_lora_rank=max(LORA_RANK, 8),
         gpu_memory_utilization=0.85,  # 纯推理基准，不需要给训练侧留显存，可以吃更多
     )
+    snapshot_memory("01_after_model_and_vllm_engine_load")  # base权重 + vLLM KV cache预留
 
     lora_request = None
     if LORA_PATH:
         lora_request = model.load_lora(LORA_PATH)
         print(f"[config] 已加载 LoRA adapter: {LORA_PATH}")
+        snapshot_memory("02_after_lora_load")
 
     prompts = [FIXED_PROMPT] * NUM_PROMPTS
     formatted = [
@@ -73,10 +96,14 @@ def main():
     warmup_kwargs = {"lora_request": lora_request} if lora_request else {}
     model.fast_generate(formatted[:2], sampling_params=sampling_params, **warmup_kwargs)
 
+    snapshot_memory("03_before_generate")
+
     print(f"[bench] 正式测试：{NUM_PROMPTS} 条并发请求，每条最多生成 {MAX_NEW_TOKENS} tokens...")
     t0 = time.perf_counter()
     outputs = model.fast_generate(formatted, sampling_params=sampling_params, **warmup_kwargs)
     elapsed = time.perf_counter() - t0
+
+    snapshot_memory("04_after_generate")
 
     total_output_tokens = sum(len(tokenizer.encode(o.outputs[0].text)) for o in outputs)
     throughput = total_output_tokens / elapsed
@@ -89,6 +116,7 @@ def main():
         "total_output_tokens": total_output_tokens,
         "throughput_tokens_per_sec": round(throughput, 2),
         "lora_loaded": bool(LORA_PATH),
+        "memory_snapshots_gb": _memory_snapshots,
     }
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -100,6 +128,7 @@ def main():
     print(f"[summary] GPU: {GPU_TAG}")
     print(f"[summary] 总耗时: {elapsed:.2f}s, 总输出token数: {total_output_tokens}")
     print(f"[summary] 纯vLLM推理吞吐: {throughput:.2f} tokens/s")
+    print(f"[summary] 显存快照: {json.dumps(_memory_snapshots, indent=2, ensure_ascii=False)}")
     print(f"[summary] 完整结果已写入: {result_path}")
     print("=" * 60)
 

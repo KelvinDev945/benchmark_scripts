@@ -39,6 +39,11 @@ GRAD_ACCUM = int(os.environ.get("GRAD_ACCUM", "4"))
 USE_FP8 = os.environ.get("USE_FP8", "0") == "1"
 BENCHMARK_STEPS = int(os.environ.get("BENCHMARK_STEPS", "10"))
 
+# 只量化KV cache(每token从2字节降到1.25字节，省约37.5%)，不动模型权重/计算——跟USE_FP8
+# (load_in_fp8，全量FP8训练+推理)是两回事，风险和收益都更小。需要GPU compute capability
+# >=8.0（Unsloth源码硬性检查，RTX 4090是8.9，满足），2026-07-19确认支持后加的开关。
+USE_FLOAT8_KV_CACHE = os.environ.get("USE_FLOAT8_KV_CACHE", "0") == "1"
+
 # 早期在 hn01 上发现 rank<8 时 vLLM 的 LoRA serving kernel 会崩溃（IndexError @
 # column_parallel_linear.py set_lora()），当时用"rank<8就关vLLM"来规避。后来查明根因其实是
 # torch/transformers 版本超出 Unsloth 支持范围（不是rank本身的问题），重装成正确版本组合
@@ -260,7 +265,7 @@ def main():
     print(f"[config] gpu_tag={GPU_TAG} rank={LORA_RANK} num_generations={NUM_GENERATIONS} "
           f"max_completion_length={MAX_COMPLETION_LENGTH} train_batch_size={TRAIN_BATCH_SIZE} "
           f"grad_accum={GRAD_ACCUM} use_vllm={USE_VLLM} vllm_standby={USE_VLLM_STANDBY and USE_VLLM} "
-          f"fp8={USE_FP8} benchmark_steps={BENCHMARK_STEPS}")
+          f"fp8={USE_FP8} float8_kv_cache={USE_FLOAT8_KV_CACHE} benchmark_steps={BENCHMARK_STEPS}")
 
     global _gpu_peak_poller
     _gpu_peak_poller = GpuPeakPoller(interval_sec=0.3).start()
@@ -272,6 +277,7 @@ def main():
         max_seq_length=MAX_PROMPT_LENGTH + MAX_COMPLETION_LENGTH,
         load_in_4bit=False,
         load_in_fp8=USE_FP8,
+        float8_kv_cache=USE_FLOAT8_KV_CACHE,
         fast_inference=USE_VLLM,
         max_lora_rank=max(LORA_RANK, 8),
         gpu_memory_utilization=0.6,
@@ -356,6 +362,7 @@ def main():
             "use_vllm": USE_VLLM,
             "use_vllm_standby": USE_VLLM_STANDBY and USE_VLLM,
             "use_fp8": USE_FP8,
+            "use_float8_kv_cache": USE_FLOAT8_KV_CACHE,
         },
         "avg_steady_state_seconds": {
             "generate": avg_generate,

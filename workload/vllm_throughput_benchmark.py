@@ -40,6 +40,11 @@ GPU_TAG = os.environ.get("GPU_TAG", "unknown_gpu")
 NUM_PROMPTS = int(os.environ.get("NUM_PROMPTS", "8"))        # 固定并发请求数，默认8对齐GRPO的num_generations(rollout N)
 MAX_NEW_TOKENS = int(os.environ.get("MAX_NEW_TOKENS", "1024"))  # 固定生成长度，跨卡保持一致才可比
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/root/rivermind-data/outputs/benchmark_run")
+# 默认关闭：FIXED_PROMPT这道简单数学题模型几百个token内就会遇到EOS提前结束，导致
+# MAX_NEW_TOKENS调多大实际输出token数都不变（2026-07-19实测4096/8192/16384三档
+# 输出token数完全一样，测的其实是同一件事）。开启后用vLLM的ignore_eos强制生成满
+# MAX_NEW_TOKENS，才能真实测出"长上下文"本身对吞吐/显存的影响。
+FORCE_FULL_LENGTH = os.environ.get("FORCE_FULL_LENGTH", "0") == "1"
 
 # 固定的测试prompt——跨卡用完全一样的输入，保证吞吐数字可比
 FIXED_PROMPT = (
@@ -89,6 +94,7 @@ def main():
         temperature=0.7,
         top_p=0.9,
         max_tokens=MAX_NEW_TOKENS,
+        ignore_eos=FORCE_FULL_LENGTH,  # 忽略EOS，强制生成满MAX_NEW_TOKENS而不是提前停止
     )
 
     # 先跑一次热身（排除首次CUDA graph捕获/编译开销），热身结果不计入统计
@@ -120,6 +126,7 @@ def main():
         "total_output_tokens": total_output_tokens,
         "throughput_tokens_per_sec": round(throughput, 2),
         "dtype": model_dtype,
+        "force_full_length": FORCE_FULL_LENGTH,
         "lora_loaded": bool(LORA_PATH),
         "lora_rank": LORA_RANK if LORA_PATH else None,
         "memory_snapshots_gb": _memory_snapshots,

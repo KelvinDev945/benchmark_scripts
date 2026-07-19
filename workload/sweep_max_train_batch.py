@@ -51,6 +51,13 @@ MEMORY_GUARD_RATIO = float(os.environ.get("MEMORY_GUARD_RATIO", "0.8"))
 TARGET_SCRIPT_NAME = os.environ.get("TARGET_SCRIPT", "train_only_benchmark.py")
 RESULT_FILE_PREFIX = os.environ.get("RESULT_FILE_PREFIX", "train_only_benchmark")
 MEMORY_SNAPSHOT_TAG = os.environ.get("MEMORY_SNAPSHOT_TAG", "04_after_training_steps")
+# 探测阶段跑几步——只是为了看跑不跑得通(OOM/超时与否)，不追求计时精度(精度靠最后的完整
+# 步数确认跑)。真实GRPO耦合场景(train_grpo_benchmark.py)单步耗时可能到几分钟(生成
+# num_generations×train_batch_size条长completion)，2步都可能超时，应该调小到1步。
+SWEEP_PROBE_STEPS = int(os.environ.get("SWEEP_PROBE_STEPS", "2"))
+# 单次探测子进程的超时上限——真实GRPO耦合场景单步耗时可能远超纯训练场景，600秒对重负载
+# 配置(大completion length×大batch)可能不够，需要按场景调大
+SWEEP_SUBPROCESS_TIMEOUT = int(os.environ.get("SWEEP_SUBPROCESS_TIMEOUT", "600"))
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TRAIN_SCRIPT = os.path.join(SCRIPT_DIR, TARGET_SCRIPT_NAME)
@@ -88,13 +95,23 @@ def try_batch_size(batch_size):
         "OUTPUT_DIR": OUTPUT_DIR,
         "GPU_TAG": f"{GPU_TAG}_sweep_bs{batch_size}",
         "TRAIN_BATCH_SIZE": str(batch_size),
-        "BENCHMARK_STEPS": "2",    # 探测OOM只需要跑通几步，不用完整benchmark步数
+        "BENCHMARK_STEPS": str(SWEEP_PROBE_STEPS),
     })
     print(f"[sweep] 尝试 TRAIN_BATCH_SIZE={batch_size} ...")
-    result = subprocess.run(
-        [sys.executable, TRAIN_SCRIPT],
-        env=env, capture_output=True, text=True, timeout=600,
-    )
+    try:
+        result = subprocess.run(
+            [sys.executable, TRAIN_SCRIPT],
+            env=env, capture_output=True, text=True, timeout=SWEEP_SUBPROCESS_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as e:
+        # 之前这里没捕获过，超时会直接把整个sweep进程崩掉、不写任何结果文件——
+        # 2026-07-19在GRPO耦合场景实测踩过：单步耗时可能到几分钟，600秒探测多个
+        # 完整RL step很容易超时，必须当成一次普通失败处理，而不是让整个脚本崩溃
+        print(f"[sweep] batch_size={batch_size} 失败（超时，超过{SWEEP_SUBPROCESS_TIMEOUT}秒未完成——"
+              f"不代表OOM，可能只是这个配置单步耗时本身就很长，考虑调大SWEEP_SUBPROCESS_TIMEOUT或调小SWEEP_PROBE_STEPS）")
+        tail = ((e.stdout or "") + (e.stderr or ""))[-2000:] if (e.stdout or e.stderr) else "(超时，无可用输出)"
+        return False, tail
+
     success = result.returncode == 0
     tail = (result.stdout + result.stderr)[-2000:]
     if not success:

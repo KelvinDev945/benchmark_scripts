@@ -118,8 +118,9 @@ def main():
 
     try:
         # 起点不再固定从1开始——SWEEP_START可以设成"已知在更短长度下测出的上限"这类先验值，
-        # 直接从那附近起跳：成功就翻倍往上探（找上界），失败就往下探（从1开始指数逼近，
-        # 找一个比SWEEP_START小的成功点），避免从1挨个试造成的浪费。
+        # 直接从那附近起跳：成功就翻倍往上探（找上界），失败就从SWEEP_START以下最大的
+        # 2的幂次开始高往低对半砍（找一个比SWEEP_START小的成功点），两个方向都避免了
+        # 从1开始逐个爬——小batch几乎总能成功，从1爬只是白费探测次数。
         ok, _ = try_batch_size(SWEEP_START)
         if ok:
             last_success = SWEEP_START
@@ -137,19 +138,23 @@ def main():
                 print(f"[sweep] 到达上限 SWEEP_MAX={SWEEP_MAX} 仍未失败，这张卡撑得住的batch size比预设上限还大，"
                       f"建议调大 SWEEP_MAX 重新跑一次以找到真正的上限")
         else:
-            # SWEEP_START本身就失败——说明真实上限比它小，回退到从1开始指数扩大，
-            # 直到找到比SWEEP_START更小的失败点为止
+            # SWEEP_START本身就失败——说明真实上限比它小。不从1开始逐个爬（那样小的batch
+            # 基本都能成功，纯粹浪费探测次数），改成从SWEEP_START以下最大的2的幂次开始，
+            # 高往低对半砍，直到找到第一个成功点为止（跟"指数扩大"阶段的方向相反，但同样
+            # 是2的倍数跳跃，不是线性扫描）
             last_success = None
             first_fail = SWEEP_START
             bs = 1
-            while bs < SWEEP_START:
+            while bs * 2 < SWEEP_START:
+                bs *= 2
+            while bs >= 1:
                 ok2, _ = try_batch_size(bs)
                 if ok2:
                     last_success = bs
-                    bs *= 2
+                    break
                 else:
                     first_fail = bs
-                    break
+                    bs //= 2
 
         if first_fail is None:
             # 没触发失败，说明 last_success 就是能测到的上限（不代表绝对最大值）

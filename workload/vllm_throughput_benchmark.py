@@ -18,7 +18,7 @@ MODEL_PATH = os.environ.get("MODEL_PATH", "/root/rivermind-data/models/DeepSeek-
 LORA_PATH = os.environ.get("LORA_PATH", "")  # 留空则不加载LoRA，纯测base模型吞吐
 LORA_RANK = int(os.environ.get("LORA_RANK", "1"))
 GPU_TAG = os.environ.get("GPU_TAG", "unknown_gpu")
-NUM_PROMPTS = int(os.environ.get("NUM_PROMPTS", "32"))       # 固定并发请求数
+NUM_PROMPTS = int(os.environ.get("NUM_PROMPTS", "8"))        # 固定并发请求数，默认8对齐GRPO的num_generations(rollout N)
 MAX_NEW_TOKENS = int(os.environ.get("MAX_NEW_TOKENS", "1024"))  # 固定生成长度，跨卡保持一致才可比
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/root/rivermind-data/outputs/benchmark_run")
 

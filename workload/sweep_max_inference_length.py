@@ -35,7 +35,7 @@ def try_length(max_new_tokens):
         "MODEL_PATH": MODEL_PATH,
         "OUTPUT_DIR": OUTPUT_DIR,
         "GPU_TAG": f"{GPU_TAG}_sweep_len{max_new_tokens}",
-        "NUM_PROMPTS": "4",  # 探测OOM/引擎能否初始化，不需要跑满32条并发
+        "NUM_PROMPTS": "8",  # 对齐GRPO的num_generations(rollout N)，不用vllm_throughput_benchmark.py默认的32
         "MAX_NEW_TOKENS": str(max_new_tokens),
     })
     print(f"[sweep] 尝试 MAX_NEW_TOKENS={max_new_tokens} ...")

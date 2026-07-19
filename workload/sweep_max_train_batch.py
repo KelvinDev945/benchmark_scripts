@@ -14,6 +14,13 @@
   MODEL_PATH=... python3 sweep_max_train_batch.py
   可选：SWEEP_START=1 SWEEP_MAX=64 GPU_TAG=xxx MEMORY_GUARD_RATIO=0.8
 
+默认探测 train_only_benchmark.py（"单独训练，vLLM是否常驻由该脚本的LOAD_VLLM_ENGINE决定"）。
+2026-07-19起可以改指向其他benchmark脚本复用同一套护栏+双向搜索逻辑，比如
+train_grpo_benchmark.py（真实GRPO训练+推理耦合场景）：
+  TARGET_SCRIPT=train_grpo_benchmark.py RESULT_FILE_PREFIX=benchmark_summary python3 sweep_max_train_batch.py
+两个脚本的显存快照tag名恰好都是"04_after_training_steps"，护栏检查代码不用改；
+如果以后接入的脚本tag名不同，用 MEMORY_SNAPSHOT_TAG 覆盖。
+
 显存护栏（2026-07-19新增，用户人工观察到 seq_length=4096/bs=48 时已经吃到22.55GB/24GB
 ——只剩1.5GB余量，继续逼近OOM边界风险不小，且再往上一两档batch带来的收益有限）：
 只要某个batch size成功但训练后峰值显存(max_allocated_gb)已经达到显卡总显存的
@@ -40,8 +47,13 @@ SWEEP_START = int(os.environ.get("SWEEP_START", "1"))
 SWEEP_MAX = int(os.environ.get("SWEEP_MAX", "64"))  # 上限保护，避免死循环扫到不合理的大小
 MEMORY_GUARD_RATIO = float(os.environ.get("MEMORY_GUARD_RATIO", "0.8"))
 
+# 探测目标可配置——同一套护栏+双向搜索逻辑既能测"单独训练"也能测"训练+推理耦合"场景
+TARGET_SCRIPT_NAME = os.environ.get("TARGET_SCRIPT", "train_only_benchmark.py")
+RESULT_FILE_PREFIX = os.environ.get("RESULT_FILE_PREFIX", "train_only_benchmark")
+MEMORY_SNAPSHOT_TAG = os.environ.get("MEMORY_SNAPSHOT_TAG", "04_after_training_steps")
+
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-TRAIN_SCRIPT = os.path.join(SCRIPT_DIR, "train_only_benchmark.py")
+TRAIN_SCRIPT = os.path.join(SCRIPT_DIR, TARGET_SCRIPT_NAME)
 
 
 def get_gpu_total_memory_gb():
@@ -95,10 +107,10 @@ def try_batch_size(batch_size):
     print(f"[sweep] batch_size={batch_size} 成功")
 
     # 读刚才那次子进程写的显存快照，跟显卡总显存比一下，判断要不要触发护栏
-    result_json_path = os.path.join(OUTPUT_DIR, f"train_only_benchmark_{GPU_TAG}_sweep_bs{batch_size}.json")
+    result_json_path = os.path.join(OUTPUT_DIR, f"{RESULT_FILE_PREFIX}_{GPU_TAG}_sweep_bs{batch_size}.json")
     try:
         with open(result_json_path) as f:
-            peak_gb = json.load(f)["memory_snapshots_gb"]["04_after_training_steps"]["max_allocated_gb"]
+            peak_gb = json.load(f)["memory_snapshots_gb"][MEMORY_SNAPSHOT_TAG]["max_allocated_gb"]
         ratio = peak_gb / GPU_TOTAL_MEMORY_GB
         print(f"[sweep] batch_size={batch_size} 训练后峰值显存 {peak_gb:.2f}GB / "
               f"总显存 {GPU_TOTAL_MEMORY_GB:.2f}GB = {ratio:.1%}")
@@ -113,7 +125,7 @@ def try_batch_size(batch_size):
 
 
 def main():
-    print(f"[config] gpu_tag={GPU_TAG} sweep_range=[{SWEEP_START}, {SWEEP_MAX}] "
+    print(f"[config] gpu_tag={GPU_TAG} target_script={TARGET_SCRIPT_NAME} sweep_range=[{SWEEP_START}, {SWEEP_MAX}] "
           f"memory_guard_ratio={MEMORY_GUARD_RATIO:.0%} gpu_total_memory={GPU_TOTAL_MEMORY_GB:.2f}GB")
 
     try:

@@ -45,6 +45,13 @@ BENCHMARK_STEPS = int(os.environ.get("BENCHMARK_STEPS", "10"))
 # 不再对低rank做保守降级；如果环境版本组合有问题需要临时规避，用 USE_VLLM=0 强制关闭。
 USE_VLLM = os.environ.get("USE_VLLM", "1") == "1"
 
+# Unsloth的vLLM"睡眠/唤醒"机制（基于vLLM原生CuMemAllocator）：训练forward+backward+
+# optimizer.step()跑的时候，vLLM的KV cache物理显存会被真正释放(unmap_and_release)给训练用；
+# 下次调用.generate()时Unsloth会自动wake_up()重新映射回来。默认开启——这是官方专门给
+# "训练+推理同时跑同一张卡"场景设计的优化，不开等于让vLLM的KV cache全程锁死显存，
+# 训练侧能用的batch size会明显偏保守（详见 obsidian 训练方法论与实验记录.md）。
+USE_VLLM_STANDBY = os.environ.get("USE_VLLM_STANDBY", "1") == "1"
+
 EPSILON_LOW = 0.2
 EPSILON_HIGH = 0.28
 PROMPT_SUFFIX = " Please reason step by step, and put your final answer within \\boxed{}."
@@ -185,13 +192,19 @@ def reward_correctness(completions, answer, **kwargs):
 
 
 def main():
+    # 必须在 `import unsloth` 之前设置——unsloth_zoo 在导入时就会读这个环境变量决定要不要
+    # 打sleep/wake补丁，导入之后再设不生效
+    if USE_VLLM_STANDBY and USE_VLLM:
+        os.environ["UNSLOTH_VLLM_STANDBY"] = "1"
+
     from unsloth import FastLanguageModel, is_bfloat16_supported
     from datasets import load_dataset
     from trl import GRPOConfig, GRPOTrainer
 
     print(f"[config] gpu_tag={GPU_TAG} rank={LORA_RANK} num_generations={NUM_GENERATIONS} "
           f"max_completion_length={MAX_COMPLETION_LENGTH} train_batch_size={TRAIN_BATCH_SIZE} "
-          f"grad_accum={GRAD_ACCUM} use_vllm={USE_VLLM} fp8={USE_FP8} benchmark_steps={BENCHMARK_STEPS}")
+          f"grad_accum={GRAD_ACCUM} use_vllm={USE_VLLM} vllm_standby={USE_VLLM_STANDBY and USE_VLLM} "
+          f"fp8={USE_FP8} benchmark_steps={BENCHMARK_STEPS}")
 
     snapshot_memory("00_before_load")
 
@@ -281,6 +294,7 @@ def main():
             "effective_batch": TRAIN_BATCH_SIZE * GRAD_ACCUM,
             "max_completion_length": MAX_COMPLETION_LENGTH,
             "use_vllm": USE_VLLM,
+            "use_vllm_standby": USE_VLLM_STANDBY and USE_VLLM,
             "use_fp8": USE_FP8,
         },
         "avg_steady_state_seconds": {

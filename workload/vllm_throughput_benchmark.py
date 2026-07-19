@@ -108,6 +108,10 @@ def main():
     total_output_tokens = sum(len(tokenizer.encode(o.outputs[0].text)) for o in outputs)
     throughput = total_output_tokens / elapsed
 
+    # 记录实际权重精度，而不是想当然认为是bf16——不同GPU/Unsloth版本的auto-dtype
+    # 探测结果可能不同，跨卡对比时这个字段必须是实测值
+    model_dtype = str(next(model.parameters()).dtype).replace("torch.", "")
+
     summary = {
         "gpu_tag": GPU_TAG,
         "num_prompts": NUM_PROMPTS,
@@ -115,7 +119,9 @@ def main():
         "elapsed_seconds": round(elapsed, 3),
         "total_output_tokens": total_output_tokens,
         "throughput_tokens_per_sec": round(throughput, 2),
+        "dtype": model_dtype,
         "lora_loaded": bool(LORA_PATH),
+        "lora_rank": LORA_RANK if LORA_PATH else None,
         "memory_snapshots_gb": _memory_snapshots,
     }
 
@@ -128,6 +134,7 @@ def main():
     print(f"[summary] GPU: {GPU_TAG}")
     print(f"[summary] 总耗时: {elapsed:.2f}s, 总输出token数: {total_output_tokens}")
     print(f"[summary] 纯vLLM推理吞吐: {throughput:.2f} tokens/s")
+    print(f"[summary] dtype={model_dtype}, lora_loaded={summary['lora_loaded']}, lora_rank={summary['lora_rank']}")
     print(f"[summary] 显存快照: {json.dumps(_memory_snapshots, indent=2, ensure_ascii=False)}")
     print(f"[summary] 完整结果已写入: {result_path}")
     print("=" * 60)

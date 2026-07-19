@@ -29,7 +29,13 @@ DATA_PATH = os.environ.get(
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/root/rivermind-data/outputs/benchmark_run")
 
 LORA_RANK = int(os.environ.get("LORA_RANK", "1"))
-LORA_ALPHA = LORA_RANK * 2
+# 2026-07-19改：不再用 rank*2 这个没有依据的公式，改成固定默认32，对齐TRL官方
+# "LoRA Without Regret" GRPO复现示例用的 lora_r=1, lora_alpha=32（alpha/r缩放比例=32）。
+# 调研过程中发现alpha/r这个比值在不同任务/框架差异很大（本项目原先=2，这份SFT/JSON
+# 复现=2，veRL+GSM8K复现=0.5，TRL自己的GRPO复现=32），没有放之四海而皆准的数字，但
+# 既然TRL官方在GRPO+rank=1这个跟本项目最贴近的场景下验证过32，直接对齐这个更可信，
+# 见 obsidian GRPO工程优化.md
+LORA_ALPHA = int(os.environ.get("LORA_ALPHA", "32"))
 LEARNING_RATE = float(os.environ.get("LEARNING_RATE", "1e-5"))
 NUM_GENERATIONS = int(os.environ.get("NUM_GENERATIONS", "8"))
 MAX_PROMPT_LENGTH = int(os.environ.get("MAX_PROMPT_LENGTH", "512"))

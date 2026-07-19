@@ -12,7 +12,14 @@
 
 用法：
   MODEL_PATH=... python3 sweep_max_train_batch.py
-  可选：SWEEP_START=1 SWEEP_MAX=64 GPU_TAG=xxx
+  可选：SWEEP_START=1 SWEEP_MAX=64 GPU_TAG=xxx MEMORY_GUARD_RATIO=0.8
+
+显存护栏（2026-07-19新增，用户人工观察到 seq_length=4096/bs=48 时已经吃到22.55GB/24GB
+——只剩1.5GB余量，继续逼近OOM边界风险不小，且再往上一两档batch带来的收益有限）：
+只要某个batch size成功但训练后峰值显存(max_allocated_gb)已经达到显卡总显存的
+MEMORY_GUARD_RATIO（默认80%），就把这个batch size直接当作最终答案，不再继续探测更大的
+batch size（不管是指数扩大阶段还是二分查找阶段）——保守上限比精确边界更重要，没必要
+每次都贴着OOM线走。
 """
 
 import os
@@ -31,13 +38,38 @@ GPU_TAG = os.environ.get("GPU_TAG", "unknown_gpu")
 
 SWEEP_START = int(os.environ.get("SWEEP_START", "1"))
 SWEEP_MAX = int(os.environ.get("SWEEP_MAX", "64"))  # 上限保护，避免死循环扫到不合理的大小
+MEMORY_GUARD_RATIO = float(os.environ.get("MEMORY_GUARD_RATIO", "0.8"))
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 TRAIN_SCRIPT = os.path.join(SCRIPT_DIR, "train_only_benchmark.py")
 
 
+def get_gpu_total_memory_gb():
+    out = subprocess.run(
+        ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, check=True,
+    )
+    return int(out.stdout.strip().splitlines()[0]) / 1024  # MiB -> GiB
+
+
+GPU_TOTAL_MEMORY_GB = get_gpu_total_memory_gb()
+
+
+class MemoryGuardTriggered(Exception):
+    """某个成功的 batch size 已经吃到显存护栏比例，携带这个 batch size 作为最终答案"""
+
+    def __init__(self, batch_size, ratio, peak_gb):
+        self.batch_size = batch_size
+        self.ratio = ratio
+        self.peak_gb = peak_gb
+
+
 def try_batch_size(batch_size):
-    """跑一次子进程，返回 (成功与否, stdout+stderr尾部用于诊断)"""
+    """跑一次子进程，返回 (成功与否, stdout+stderr尾部用于诊断)。
+
+    成功且显存占比触发护栏时，直接抛 MemoryGuardTriggered 让调用方（主流程）提前终止
+    所有后续探测——不管当前处于指数扩大还是二分查找的哪个阶段。
+    """
     env = os.environ.copy()
     env.update({
         "MODEL_PATH": MODEL_PATH,
@@ -58,67 +90,97 @@ def try_batch_size(batch_size):
         print(f"[sweep] batch_size={batch_size} 失败（{'OOM' if is_oom else '其他错误，见下方日志'}）")
         if not is_oom:
             print(tail)
-    else:
-        print(f"[sweep] batch_size={batch_size} 成功")
+        return success, tail
+
+    print(f"[sweep] batch_size={batch_size} 成功")
+
+    # 读刚才那次子进程写的显存快照，跟显卡总显存比一下，判断要不要触发护栏
+    result_json_path = os.path.join(OUTPUT_DIR, f"train_only_benchmark_{GPU_TAG}_sweep_bs{batch_size}.json")
+    try:
+        with open(result_json_path) as f:
+            peak_gb = json.load(f)["memory_snapshots_gb"]["04_after_training_steps"]["max_allocated_gb"]
+        ratio = peak_gb / GPU_TOTAL_MEMORY_GB
+        print(f"[sweep] batch_size={batch_size} 训练后峰值显存 {peak_gb:.2f}GB / "
+              f"总显存 {GPU_TOTAL_MEMORY_GB:.2f}GB = {ratio:.1%}")
+        if ratio >= MEMORY_GUARD_RATIO:
+            print(f"[sweep] 显存占比已达到护栏阈值 {MEMORY_GUARD_RATIO:.0%}，"
+                  f"停止继续探测更大的batch size，把 {batch_size} 作为保守上限")
+            raise MemoryGuardTriggered(batch_size, ratio, peak_gb)
+    except (FileNotFoundError, KeyError) as e:
+        print(f"[sweep] 警告：没能读到 batch_size={batch_size} 的显存快照（{e}），跳过护栏检查")
+
     return success, tail
 
 
 def main():
-    print(f"[config] gpu_tag={GPU_TAG} sweep_range=[{SWEEP_START}, {SWEEP_MAX}]")
+    print(f"[config] gpu_tag={GPU_TAG} sweep_range=[{SWEEP_START}, {SWEEP_MAX}] "
+          f"memory_guard_ratio={MEMORY_GUARD_RATIO:.0%} gpu_total_memory={GPU_TOTAL_MEMORY_GB:.2f}GB")
 
-    # 起点不再固定从1开始——SWEEP_START可以设成"已知在更短长度下测出的上限"这类先验值，
-    # 直接从那附近起跳：成功就翻倍往上探（找上界），失败就往下探（从1开始指数逼近，
-    # 找一个比SWEEP_START小的成功点），避免从1挨个试造成的浪费。
-    ok, _ = try_batch_size(SWEEP_START)
-    if ok:
-        last_success = SWEEP_START
-        first_fail = None
-        bs = SWEEP_START * 2
-        while bs <= SWEEP_MAX:
-            ok, _ = try_batch_size(bs)
-            if ok:
-                last_success = bs
-                bs *= 2
+    try:
+        # 起点不再固定从1开始——SWEEP_START可以设成"已知在更短长度下测出的上限"这类先验值，
+        # 直接从那附近起跳：成功就翻倍往上探（找上界），失败就往下探（从1开始指数逼近，
+        # 找一个比SWEEP_START小的成功点），避免从1挨个试造成的浪费。
+        ok, _ = try_batch_size(SWEEP_START)
+        if ok:
+            last_success = SWEEP_START
+            first_fail = None
+            bs = SWEEP_START * 2
+            while bs <= SWEEP_MAX:
+                ok, _ = try_batch_size(bs)
+                if ok:
+                    last_success = bs
+                    bs *= 2
+                else:
+                    first_fail = bs
+                    break
             else:
-                first_fail = bs
-                break
+                print(f"[sweep] 到达上限 SWEEP_MAX={SWEEP_MAX} 仍未失败，这张卡撑得住的batch size比预设上限还大，"
+                      f"建议调大 SWEEP_MAX 重新跑一次以找到真正的上限")
         else:
-            print(f"[sweep] 到达上限 SWEEP_MAX={SWEEP_MAX} 仍未失败，这张卡撑得住的batch size比预设上限还大，"
-                  f"建议调大 SWEEP_MAX 重新跑一次以找到真正的上限")
-    else:
-        # SWEEP_START本身就失败——说明真实上限比它小，回退到从1开始指数扩大，
-        # 直到找到比SWEEP_START更小的失败点为止
-        last_success = None
-        first_fail = SWEEP_START
-        bs = 1
-        while bs < SWEEP_START:
-            ok2, _ = try_batch_size(bs)
-            if ok2:
-                last_success = bs
-                bs *= 2
-            else:
-                first_fail = bs
-                break
+            # SWEEP_START本身就失败——说明真实上限比它小，回退到从1开始指数扩大，
+            # 直到找到比SWEEP_START更小的失败点为止
+            last_success = None
+            first_fail = SWEEP_START
+            bs = 1
+            while bs < SWEEP_START:
+                ok2, _ = try_batch_size(bs)
+                if ok2:
+                    last_success = bs
+                    bs *= 2
+                else:
+                    first_fail = bs
+                    break
 
-    if first_fail is None:
-        # 没触发失败，说明 last_success 就是能测到的上限（不代表绝对最大值）
-        result = {"gpu_tag": GPU_TAG, "max_working_batch_size": last_success,
-                  "note": f"在SWEEP_MAX={SWEEP_MAX}范围内没有失败，真实上限可能更大"}
-    elif last_success is None:
-        # 连1都装不下
-        result = {"gpu_tag": GPU_TAG, "max_working_batch_size": 0,
-                  "note": "连 batch_size=1 都OOM，这张卡在当前配置下训不了"}
-    else:
-        # 第二步：在 (last_success, first_fail) 之间二分查找精确边界
-        lo, hi = last_success, first_fail
-        while hi - lo > 1:
-            mid = (lo + hi) // 2
-            ok, _ = try_batch_size(mid)
-            if ok:
-                lo = mid
-            else:
-                hi = mid
-        result = {"gpu_tag": GPU_TAG, "max_working_batch_size": lo, "first_failing_batch_size": hi}
+        if first_fail is None:
+            # 没触发失败，说明 last_success 就是能测到的上限（不代表绝对最大值）
+            result = {"gpu_tag": GPU_TAG, "max_working_batch_size": last_success,
+                      "note": f"在SWEEP_MAX={SWEEP_MAX}范围内没有失败，真实上限可能更大"}
+        elif last_success is None:
+            # 连1都装不下
+            result = {"gpu_tag": GPU_TAG, "max_working_batch_size": 0,
+                      "note": "连 batch_size=1 都OOM，这张卡在当前配置下训不了"}
+        else:
+            # 第二步：在 (last_success, first_fail) 之间二分查找精确边界
+            lo, hi = last_success, first_fail
+            while hi - lo > 1:
+                mid = (lo + hi) // 2
+                ok, _ = try_batch_size(mid)
+                if ok:
+                    lo = mid
+                else:
+                    hi = mid
+            result = {"gpu_tag": GPU_TAG, "max_working_batch_size": lo, "first_failing_batch_size": hi}
+    except MemoryGuardTriggered as guard:
+        # 不管当前处于指数扩大还是二分查找的哪一步，只要摸到护栏比例就立刻收工，
+        # 不再逼近精确的OOM边界——保守上限、留够余量比"卡着线走"更重要
+        result = {
+            "gpu_tag": GPU_TAG,
+            "max_working_batch_size": guard.batch_size,
+            "note": f"显存护栏提前停止：batch_size={guard.batch_size}时训练后峰值显存已达"
+                    f"{guard.peak_gb:.2f}GB（总显存{GPU_TOTAL_MEMORY_GB:.2f}GB的{guard.ratio:.1%}，"
+                    f"超过护栏阈值{MEMORY_GUARD_RATIO:.0%}），未继续二分逼近精确OOM边界，"
+                    f"真实上限可能比这个数字更大",
+        }
 
     result_path = os.path.join(OUTPUT_DIR, f"sweep_max_train_batch_{GPU_TAG}.json")
     os.makedirs(OUTPUT_DIR, exist_ok=True)

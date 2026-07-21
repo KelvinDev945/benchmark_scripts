@@ -5,6 +5,18 @@
 # 用法（在其他脚本里）：
 #   source "$(dirname "${BASH_SOURCE[0]}")/sources.sh"
 
+# ---- uv 装在持久化数据盘（$DATA_DIR/bin），不是 ~/.local/bin ----
+# 官方安装脚本默认装到 ~/.local/bin，但那是根分区（30G，容器重置/实例释放就清空），
+# 每次新开实例都要重新下载一遍 uv 本身。装到数据盘能跨容器重置存活，见
+# download_data_and_code.sh 里 UV_INSTALL_DIR 的用法。
+# 另外，`download_data_and_code.sh` 是被 step1_wo_gpu.sh 用 `bash xxx.sh` 起子进程
+# 调用的，子进程里 export 的 PATH 不会传回父进程/后续脚本（子进程间不共享环境变量），
+# 这里每次 source sources.sh 都补一遍 PATH，确保 install_python_deps.sh 等后续脚本
+# 能找到已经装好的 uv，不用重新安装。
+_SOURCES_DATA_DIR_EARLY="${DATA_DIR:-/root/rivermind-data}"
+export UV_INSTALL_DIR="${UV_INSTALL_DIR:-$_SOURCES_DATA_DIR_EARLY/bin}"
+export PATH="$UV_INSTALL_DIR:$PATH"
+
 # ---- PyPI 镜像：所有 uv/pip 安装统一走这个源 ----
 export PYPI_MIRROR="${PYPI_MIRROR:-https://pypi.tuna.tsinghua.edu.cn/simple}"
 

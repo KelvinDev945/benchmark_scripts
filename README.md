@@ -22,12 +22,19 @@ Step 2 开始，省下来的无卡等待时间就是省下来的钱。
 **flash-attn 也在 Step 1 里装好**——`install_python_deps.sh` 把 torch 锁定在
 `2.8.x`，正好命中 flash-attn 官方 GitHub Releases 的预编译wheel矩阵覆盖范围
 （`cu12+torch2.8`），`install_flash_attn.sh` 会自动探测 torch/python版本 + C++11
-ABI，拼出对应wheel直接下载安装，**几秒钟装完，完全不用编译**。只有在torch版本超出
-wheel矩阵覆盖范围时才会退回源码编译（这种情况下才需要nvcc，可以用
-`install/download_cuda_toolkit.sh`手动装，默认关闭，`INSTALL_CUDA_TOOLKIT=1`打开——
-2026-07-18在fj01上实测过：torch2.10时没有匹配wheel，编译flash-attn要烧30分钟以上
-CPU时间，所以正常情况下都应该走预编译wheel这条路，不需要装nvcc）。Step 2 因此只剩
-一件事——真正需要GPU硬件在场的模型加载验证。
+ABI，拼出对应wheel直接下载安装。下载支持**断点续传**（固定路径+`curl -C -`），
+同一个源卡住/中断不会丢弃已下载部分，多个源轮流重试，**不退回源码编译**——
+2026-07-18在fj01上实测过：torch2.10时没有匹配wheel被迫源码编译，要烧30分钟以上
+CPU时间，所以必须走预编译wheel这条路。
+
+**CUDA Toolkit（含nvcc）也默认在 Step 1 装好**——虽然 flash-attn 本身不需要nvcc，
+但 Step 3 的 `hardware/run_gpu_burn.sh`/`run_nvbandwidth.sh` 编译时要用，装nvcc
+本身不需要GPU在场，2026-07-21在fj02上因为之前默认跳过这一步，导致编译被拖到已经
+挂卡计费之后才做，浪费了GPU计费时间，所以改成默认装（`install/download_cuda_toolkit.sh`，
+`INSTALL_CUDA_TOOLKIT=0` 可显式关闭）。版本号（默认12.8.0）跟 `install_python_deps.sh`
+锁定的 torch cu128 保持一致，改torch版本时要联动改这里。
+
+Step 2 因此只剩一件事——真正需要GPU硬件在场的模型加载验证。
 
 ## ⚠️ 数据保存位置：`/root/rivermind-data`
 
@@ -42,14 +49,18 @@ CPU时间，所以正常情况下都应该走预编译wheel这条路，不需要
 ```
 benchmark_scripts/
 ├── install/
-│   ├── sources.sh                   # 统一分发源配置(PyPI镜像/HF_ENDPOINT/GitHub代理/ModelScope优先/CUDA_HOME自动探测)，被其他脚本source
-│   ├── step1_wo_gpu.sh               # [wo GPU] 入口：顺序调用下面四个脚本
-│   │   ├── download_data_and_code.sh #   下载base模型/数据集/JustRL代码
-│   │   ├── install_python_deps.sh    #   装torch(锁2.8.x)/transformers/vllm/unsloth等（flash-attn除外）
-│   │   ├── download_cuda_toolkit.sh  #   下载+装nvcc到持久化数据盘（默认关闭，只有flash-attn要编译时才需要）
-│   │   └── install_flash_attn.sh     #   优先装预编译wheel(几秒钟)，没有匹配wheel才退回源码编译
+│   ├── sources.sh                   # 统一分发源配置(PyPI镜像/HF_ENDPOINT/GitHub代理/ModelScope优先/CUDA_HOME自动探测/uv装到数据盘)，被其他脚本source
+│   ├── step1_wo_gpu.sh               # [wo GPU] 入口：先同步跑bootstrap_uv，再并行拉起5个独立任务，最后串行跑flash-attn
+│   │   ├── bootstrap_uv.sh           #   （同步，最先跑）装uv+modelscope+huggingface_hub，避免并行任务互相踩踏装uv
+│   │   ├── download_model.sh         #   ┐
+│   │   ├── download_dataset.sh       #   │ 五个任务互相独立，并行拉起，谁先完成
+│   │   ├── clone_justrl.sh           #   │ 就算谁先完成（打在不同域名/CDN上）
+│   │   ├── install_python_deps.sh    #   │ 装torch(锁2.8.x)/transformers/vllm/unsloth等（flash-attn除外）
+│   │   ├── download_cuda_toolkit.sh  #   ┘ 下载+装nvcc到持久化数据盘（默认装，Step3编译gpu-burn/nvbandwidth要用）
+│   │   └── install_flash_attn.sh     #   （串行，依赖install_python_deps）预编译wheel+断点续传+多源重试，不退回源码编译
+│   │   └── download_data_and_code.sh #   串行兼容入口（=bootstrap_uv+download_model+download_dataset+clone_justrl依次跑），单独用时保留
 │   └── step2_with_gpu.sh             # [with GPU] 入口：只做真正需要GPU在场的事
-│       └── verify_gpu_environment.sh #   快速验证模型能加载+LoRA能包装
+│       └── verify_gpu_environment.sh #   快速验证模型能加载+LoRA能包装（依赖系统python3-dev提供Python.h，否则Triton JIT编译会失败）
 ├── hardware/                         # Step 3，需要挂卡
 │   ├── run_gpu_burn.sh               # Tensor Core 算力压测
 │   └── run_nvbandwidth.sh            # 显存内带宽 + PCIe 带宽测试
@@ -77,7 +88,12 @@ benchmark_scripts/
   flash-attn编译耗时30分钟以上）。基础镜像自带的torch如果已经在这个区间内会跳过重装。
   不要分多次单独 `pip/uv install` 某个包，否则依赖解析器看不到全局约束，容易把
   torch/transformers 静默升级到不兼容版本（2026-07-17 在 hn01 上踩过这个坑）。
-- Python 3.11/3.12（均已验证，`install_flash_attn.sh`会自动探测python版本拼预编译wheel文件名）。
+- Python 3.10/3.11/3.12（均已验证，`install_flash_attn.sh`会自动探测python版本拼预编译wheel文件名）。
+- **系统需要 `python3-dev`（提供 `Python.h`）**——2026-07-21在fj02上发现：没装这个包时，
+  Triton 运行时JIT编译CUDA wrapper会报 `fatal error: Python.h: No such file or directory`，
+  导致 Step 2 的 Unsloth 模型加载直接失败。跟 uv 装的 python 包无关，是系统镜像缺开发头
+  文件，装对应系统Python版本的 `python3-dev`（如 `apt-get install -y python3-dev`）即可，
+  这个操作本身在挂卡前后都能做（不需要GPU），建议以后并入 Step 1。
 
 ## 快速开始
 
@@ -100,7 +116,11 @@ export DATA_PATH="/root/rivermind-data/datasets/DAPO-Math-17k-Processed/en/train
 bash hardware/run_gpu_burn.sh 180
 bash hardware/run_nvbandwidth.sh
 python3 workload/train_grpo_benchmark.py
-python3 workload/vllm_throughput_benchmark.py
+FORCE_FULL_LENGTH=1 python3 workload/vllm_throughput_benchmark.py   # 不加这个开关，模型可能几百token内自然EOS提前停止，测不到长上下文的真实压力
 ```
 
 结果记录方式见 `results/record_template.md`。
+
+**⚠️ 两个脚本"满长度"的实现方式不一样，别搞混**：
+- `vllm_throughput_benchmark.py` 靠显式开关 `FORCE_FULL_LENGTH=1`（→`ignore_eos=True`）强制生成撑满 `max_new_tokens`，不开就可能只测到模型自然EOS提前结束的那一小段，几档长度测出来是同一件事（2026-07-19在fj01上踩过这个坑）。**要跟其他卡的历史数据对比，必须带上这个开关**。
+- `train_grpo_benchmark.py` 没有这个开关，但早期训练阶段（rank=1、几乎没收敛）的模型输出本身就不太会自然停止，实测 `completions/clipped_ratio` 接近1.0，等效于自然跑满长度，不需要额外开关（2026-07-21在A100上验证）。

@@ -20,7 +20,15 @@ apt update && apt install -y libboost-program-options-dev cmake
 
 if [ ! -d "$NVBW_DIR" ]; then
     echo "=== clone + 编译 nvbandwidth ==="
-    git clone https://github.com/NVIDIA/nvbandwidth.git "$NVBW_DIR"
+    # 先测GitHub直连，不通则走代理（每台实例网络环境不一样，不能假设一致——
+    # 2026-07-21在fj02上实测：run_gpu_burn.sh的直连clone超时130秒才失败且无兜底，
+    # 导致 set -e 直接中断整个脚本，这里同样补上代理容错）
+    if curl -s -m 8 -o /dev/null -w '%{http_code}' https://github.com | grep -q '200'; then
+        GITHUB_PREFIX=""
+    else
+        GITHUB_PREFIX="$GITHUB_PROXY_PREFIX"
+    fi
+    git clone "${GITHUB_PREFIX}https://github.com/NVIDIA/nvbandwidth.git" "$NVBW_DIR"
     mkdir -p "$NVBW_DIR/build"
     (cd "$NVBW_DIR/build" && cmake .. -DCMAKE_CUDA_COMPILER="$(command -v nvcc)" && make -j4)
 fi

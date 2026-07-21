@@ -58,6 +58,16 @@ BENCHMARK_STEPS = int(os.environ.get("BENCHMARK_STEPS", "10"))
 # >=8.0（Unsloth源码硬性检查，RTX 4090是8.9，满足），2026-07-19确认支持后加的开关。
 USE_FLOAT8_KV_CACHE = os.environ.get("USE_FLOAT8_KV_CACHE", "0") == "1"
 
+# 2026-07-21新增，默认开启：跟 vllm_throughput_benchmark.py 的 FORCE_FULL_LENGTH 是
+# 同一个诉求——不开的话，GRPO rollout生成会因为模型偶尔提前吐出EOS而在不同次跑之间
+# 得到不一样的实际completion token数，导致backward+optim要处理的真实计算量不完全一致，
+# 干扰跨GPU/跨配置的耗时对比（2026-07-21在A100/fj02上排查"backward耗时run-to-run差异大"
+# 时怀疑过这是候选原因之一，详见obsidian训练方法论与实验记录.md）。默认开等于总是让
+# generate跑满 MAX_COMPLETION_LENGTH（vLLM SamplingParams的ignore_eos，透传自TRL
+# GRPOConfig的generation_kwargs），测的是"最差情况"（生成拉满不提前停），benchmark的
+# 意义就是摸清这条上限。不想测最差情况时才需要显式关：FORCE_FULL_LENGTH=0
+FORCE_FULL_LENGTH = os.environ.get("FORCE_FULL_LENGTH", "1") == "1"
+
 # 早期在 hn01 上发现 rank<8 时 vLLM 的 LoRA serving kernel 会崩溃（IndexError @
 # column_parallel_linear.py set_lora()），当时用"rank<8就关vLLM"来规避。后来查明根因其实是
 # torch/transformers 版本超出 Unsloth 支持范围（不是rank本身的问题），重装成正确版本组合
@@ -157,6 +167,44 @@ def snapshot_memory(tag):
 # ---- 每步耗时拆分：猴子补丁 GRPOTrainer 的生成方法，单独计时 ----
 _step_timings = []  # 每个元素: {"generate_s": float, "total_s": float}
 _current_generate_time = [0.0]
+# 2026-07-21新增：wake_up()/sleep() 单独计时，不再混进"backward+optim"这个桶。
+# 之前的口径把这两个vLLM standby显存unmap/remap调用算进了"backward+optim"（因为它俩
+# 是在 GRPOTrainer._prepare_inputs 里调用的，而不是在被打点的
+# _generate_and_score_completions 内部，"backward+optim"是"整步总耗时-generate耗时"
+# 算出来的，会把sleep/wake_up的开销也算进去）。在A100(40GB)上vLLM常驻显存池比4090(24GB)
+# 大得多(约33GB vs 18GB)，如果unmap/remap耗时跟显存池大小相关，会让"backward+optim"这个
+# 数字失真，误判成"A100反向传播更慢"。加这两个单独的计时点来验证/排除这个因素。
+_current_wake_time = [0.0]
+_current_sleep_time = [0.0]
+
+
+def patch_vllm_sleep_wake_timing(trainer):
+    """给 trainer.llm 的 wake_up()/sleep() 单独打点，不让这部分开销被误算进 backward+optim。"""
+    import functools
+    import torch
+
+    llm = getattr(trainer, "llm", None)
+    if llm is None:
+        print("[timing][警告] trainer.llm 不存在，跳过 wake_up/sleep 单独计时（standby可能没开）")
+        return False
+
+    for method_name, box in (("wake_up", _current_wake_time), ("sleep", _current_sleep_time)):
+        if not hasattr(llm, method_name):
+            continue
+        orig = getattr(llm, method_name)
+
+        @functools.wraps(orig)
+        def wrapped(*args, __orig=orig, __box=box, **kwargs):
+            torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            result = __orig(*args, **kwargs)
+            torch.cuda.synchronize()
+            __box[0] += time.perf_counter() - t0
+            return result
+
+        setattr(llm, method_name, wrapped)
+        print(f"[timing] 已对 trainer.llm.{method_name} 单独打点计时")
+    return True
 
 
 def patch_trainer_timing(trainer):
@@ -213,11 +261,19 @@ class StepTimingCallback:
         torch.cuda.synchronize()
         total = time.perf_counter() - self._step_start
         generate_s = _current_generate_time[0]
-        backward_s = max(total - generate_s, 0.0)
+        wake_s = _current_wake_time[0]
+        sleep_s = _current_sleep_time[0]
+        # backward_s 现在扣掉 wake/sleep，不再把vLLM standby的显存unmap/remap开销
+        # 误算进"backward+optim"（2026-07-21修正，详见 patch_vllm_sleep_wake_timing 注释）
+        backward_s = max(total - generate_s - wake_s - sleep_s, 0.0)
         _step_timings.append({"step": state.global_step, "total_s": total,
-                               "generate_s": generate_s, "backward_s": backward_s})
+                               "generate_s": generate_s, "backward_s": backward_s,
+                               "wake_s": wake_s, "sleep_s": sleep_s})
         print(f"[timing] step={state.global_step} total={total:.2f}s "
-              f"generate={generate_s:.2f}s backward+optim={backward_s:.2f}s")
+              f"generate={generate_s:.2f}s wake={wake_s:.2f}s sleep={sleep_s:.2f}s backward+optim={backward_s:.2f}s")
+        # 重置本步累计值，避免下一步重复计入
+        _current_wake_time[0] = 0.0
+        _current_sleep_time[0] = 0.0
         if len(_step_timings) >= BENCHMARK_STEPS:
             control.should_training_stop = True
         return control
@@ -280,7 +336,8 @@ def main():
           f"max_completion_length={MAX_COMPLETION_LENGTH} train_batch_size={TRAIN_BATCH_SIZE} "
           f"grad_accum={GRAD_ACCUM} num_iterations={NUM_ITERATIONS} use_vllm={USE_VLLM} "
           f"vllm_standby={USE_VLLM_STANDBY and USE_VLLM} "
-          f"fp8={USE_FP8} float8_kv_cache={USE_FLOAT8_KV_CACHE} benchmark_steps={BENCHMARK_STEPS}")
+          f"fp8={USE_FP8} float8_kv_cache={USE_FLOAT8_KV_CACHE} force_full_length={FORCE_FULL_LENGTH} "
+          f"benchmark_steps={BENCHMARK_STEPS}")
 
     global _gpu_peak_poller
     _gpu_peak_poller = GpuPeakPoller(interval_sec=0.3).start()
@@ -338,6 +395,11 @@ def main():
         logging_steps=1,
         save_strategy="no",  # benchmark跑几步不需要存checkpoint
         report_to="none",    # benchmark跑几步不需要接wandb
+        # 透传给 vLLM SamplingParams（trl/trainer/grpo_trainer.py 里
+        # `SamplingParams(**generation_kwargs)`）——ignore_eos=True 强制生成跑满
+        # max_completion_length，消除"模型提前吐EOS导致每次实际token数不一样"这个
+        # 混淆变量，见上面 FORCE_FULL_LENGTH 的注释
+        generation_kwargs={"ignore_eos": True} if FORCE_FULL_LENGTH else None,
     )
 
     trainer = GRPOTrainer(
@@ -350,6 +412,7 @@ def main():
     )
 
     patch_trainer_timing(trainer)
+    patch_vllm_sleep_wake_timing(trainer)
 
     snapshot_memory("03_before_first_step")
     trainer.train()
@@ -363,8 +426,10 @@ def main():
         avg_generate = sum(s["generate_s"] for s in steady_steps) / len(steady_steps)
         avg_backward = sum(s["backward_s"] for s in steady_steps) / len(steady_steps)
         avg_total = sum(s["total_s"] for s in steady_steps) / len(steady_steps)
+        avg_wake = sum(s.get("wake_s", 0.0) for s in steady_steps) / len(steady_steps)
+        avg_sleep = sum(s.get("sleep_s", 0.0) for s in steady_steps) / len(steady_steps)
     else:
-        avg_generate = avg_backward = avg_total = None
+        avg_generate = avg_backward = avg_total = avg_wake = avg_sleep = None
 
     summary = {
         "gpu_tag": GPU_TAG,
@@ -380,9 +445,12 @@ def main():
             "use_vllm_standby": USE_VLLM_STANDBY and USE_VLLM,
             "use_fp8": USE_FP8,
             "use_float8_kv_cache": USE_FLOAT8_KV_CACHE,
+            "force_full_length": FORCE_FULL_LENGTH,
         },
         "avg_steady_state_seconds": {
             "generate": avg_generate,
+            "wake": avg_wake,    # vLLM standby唤醒(显存remap)，2026-07-21起单独打点，不再混进backward_optim
+            "sleep": avg_sleep,  # vLLM standby睡眠(显存unmap)，同上
             "backward_optim": avg_backward,
             "total": avg_total,
         },
@@ -402,7 +470,8 @@ def main():
     print("\n" + "=" * 60)
     print(f"[summary] GPU: {GPU_TAG}")
     print(f"[summary] 稳态单步耗时（跳过首步编译开销）: "
-          f"generate={avg_generate:.2f}s backward+optim={avg_backward:.2f}s total={avg_total:.2f}s"
+          f"generate={avg_generate:.2f}s wake={avg_wake:.2f}s sleep={avg_sleep:.2f}s "
+          f"backward+optim={avg_backward:.2f}s total={avg_total:.2f}s"
           if avg_generate is not None else "[summary] 没有采集到有效的稳态step数据")
     print(f"[summary] 显存快照: {json.dumps(_memory_snapshots, indent=2, ensure_ascii=False)}")
     print(f"[summary] nvidia-smi真实峰值(0.3秒轮询全程追踪): "

@@ -14,6 +14,7 @@
 | 真实 RTX 4090 | 165 TFLOPS | 1008 GB/s | ~32 GB/s | 已有数据 |
 | 云端 RTX 5090 | 111.8 TFLOPS ⚠️见WMMA说明 | 761 GB/s（42%） | 12.64 GB/s | 已有数据 |
 | 真实 RTX 5090 | ~314 TFLOPS | 1792 GB/s | ~128 GB/s | 已有数据 |
+| 云端 A100-PCIE-40GB（fj02，2026-07-21） | 120.5 TFLOPS（理论312 TFLOPS的38.6%） | 686.76 GB/s（理论~1555 GB/s的44%） | 12.31 GB/s（D→H 13.15 GB/s） | errors:0，峰值温度60°C；降频比例跟同期4090/5090系列（40-47%区间）一致，再次印证云端虚拟化平台的统一限速规律 |
 | （新测的卡） | | | | |
 
 ## 二、GRPO 实际工作负载测试
@@ -21,6 +22,11 @@
 | GPU | generate单步耗时(s) | backward+optim单步耗时(s) | 纯vLLM吞吐(tokens/s) | base模型加载后显存(GB) | LoRA包装后显存(GB) | 训练step后峰值显存(GB) |
 |---|---|---|---|---|---|---|
 | RTX 4090（hn01） | 6.28 | 2-4 | 待测 | 待测 | 待测 | 待测 |
+| A100-PCIE-40GB（fj02，2026-07-21，默认1024长度） | 10.81（占比90.3%） | 1.16（占比9.7%，单步总计11.97s） | 待测（下一步跑vllm_throughput_benchmark.py） | 33.69 | 33.69（几乎无变化） | 34.34（nvidia-smi真实峰值，占40GB的85.9%；vLLM standby休眠期间训练本身只占4.43-4.56GB） |
+| ~~A100-PCIE-40GB（fj02，2026-07-21，sweep探测1步数据，已作废）~~ | ~~138.46~~ | ~~247.06（单步总计385.52s）~~ | — | — | — | **⚠️数据来自`SWEEP_PROBE_STEPS=1`单步探测，backward+optim混入未知的run-to-run差异（不只是编译开销，具体原因未查明），已被下一行的正式3步稳态数据取代，不要引用本行数字** |
+| A100-PCIE-40GB（fj02，2026-07-21，seq4096/bs28，**正式`BENCHMARK_STEPS=3`稳态**，取代上一行） | 136.85 | **39.37**（单步总计**182.06s**；wake=0.90s sleep=4.94s） | 待测 | N/A | N/A | **39.005GB（真实峰值，占40GB的97.5%）**；对比4090同配置总耗时456.43s，**A100快2.5倍**（backward+optim快5.2倍：39.37s vs 205.65s）。⚠️两次"step1"耗时对不上（sweep探测的step1 backward=247s vs 本次复测的step1 backward=63s），怀疑跟torch.compile/Triton磁盘编译缓存复用有关，未验证，**待在4090上用同样方法论(3步稳态+清缓存)复现验证**，详见obsidian笔记 |
+| A100-PCIE-40GB（fj02，2026-07-21，seq4096/bs8，**USE_VLLM_STANDBY=0关闭**） | 48.22 | 11.88（单步总计**60.10s**，wake=0.00s sleep=0.00s） | 待测 | N/A | N/A | **36.06GB（真实峰值，占40GB的90.2%）**；关闭standby后wake/sleep计时器读数为0，验证了新增的单独打点逻辑正确 |
+| A100-PCIE-40GB（fj02，2026-07-21，seq4096/bs8，**USE_VLLM_STANDBY=1开启**，同batch对照） | 55.25（比关闭standby慢7.03s） | 7.98（比关闭standby快3.9s；单步总计**67.11s**，比关闭standby慢7.01s/11.7%；wake=0.99s sleep=2.90s） | 待测 | N/A | N/A | **34.81GB（真实峰值，占40GB的87.0%，比关闭standby省1.25GB）**；**结论：bs=8时显存本来就够用(关闭standby也只到90.2%)，开standby在这个场景纯属负担——多花11.7%时间只省了1.25GB用不上的显存**；wake/sleep开销(3.89s)只能部分解释之前seq4096/bs28那组"backward变慢"的现象，扣除后backward本身standby版反而更快，说明还有其他未查明因素（可能是两次跑生成的实际token数因采样随机性不同，backward负载本身不完全一致，不是严格受控对比） |
 | （新测的卡） | | | | | | |
 
 ## 三、跑法（复制粘贴用）
@@ -49,3 +55,16 @@ python3 workload/vllm_throughput_benchmark.py
 跑完把 `$OUTPUT_DIR/benchmark_summary_$GPU_TAG.json`、`$OUTPUT_DIR/vllm_throughput_$GPU_TAG.json`
 和 `$DATA_DIR/benchmark_results/gpu_burn_result_*.log`、`$DATA_DIR/benchmark_results/nvbandwidth_result_*.log`
 scp 回本地存进这个 `results/` 目录。
+
+## 四、bs大小 vs 吞吐效率（2026-07-21，A100初步发现，待4090验证）
+
+按"每步样本数=train_batch_size×grad_accum×num_generations"折算吞吐（样本/秒），而不是只看单步总耗时：
+
+| GPU | 配置 | 每步样本数 | 单步耗时 | 吞吐（样本/秒） |
+|---|---|---|---|---|
+| A100(fj02) | bs=28,standby开（⚠️数据来自sweep探测阶段仅1步，可能含warmup开销，非严格稳态） | 896 | 385.52s | 2.32 |
+| A100(fj02) | bs=8,standby关（3步稳态） | 256 | 60.10s | 4.26 |
+| A100(fj02) | bs=8,standby开（3步稳态） | 256 | 67.11s | 3.81 |
+| 4090 | bs=?,standby开/关 | ? | ? | 待补（用户计划验证） |
+
+**初步发现**：bs=8吞吐比bs=28高约1.6-1.8倍，跟"batch越大摊销效应越好"的直觉相反，推测与bs=28逼近97.5%显存上限时CUDA分配器碎片整理开销增大有关。**待办**：①给bs=28补跑正式`BENCHMARK_STEPS=3`稳态测试（不是sweep探测的1步数据）；②在4090上跑同样的bs大对比bs小实验，验证这个"大batch效率反而更低"现象是否是A100在高显存占用下特有的，还是所有卡的普遍规律。

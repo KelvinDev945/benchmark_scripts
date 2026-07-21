@@ -1,21 +1,25 @@
 #!/bin/bash
-# [wo GPU，默认不装] 下载 + 安装 CUDA Toolkit（含nvcc）到持久化数据盘。
+# [wo GPU，默认装] 下载 + 安装 CUDA Toolkit（含nvcc）到持久化数据盘。
 #
-# 现状：install_python_deps.sh 把 torch 锁定在 2.8.x，install_flash_attn.sh 因此
-# 能直接装 flash-attn 官方预编译wheel，不再需要从源码编译——而nvcc唯一的用途就是
-# 编译flash-attn，所以**默认不再需要装这个**。保留这个脚本是为了以后万一某个包
-# 又需要从源码编译CUDA代码时可以随时手动开启，不是默认流程的一部分。
+# flash-attn 本身不需要nvcc（用预编译wheel），但 hardware/run_gpu_burn.sh 和
+# run_nvbandwidth.sh（Step 3 硬件测试）编译时都要用 nvcc——之前默认跳过这一步，
+# 导致 2026-07-21 在 fj02 上编译 gpu-burn 时才发现缺 nvcc，只能现场在已经挂卡
+# 计费的状态下临时装，白白浪费了GPU计费时间。改成 Step 1（无卡阶段）默认就装好，
+# 编译本身不需要真实GPU在场，跟这两个工具的 clone+编译一起挪到 Step 1 更划算。
+# 需要跳过就显式关闭：INSTALL_CUDA_TOOLKIT=0 bash download_cuda_toolkit.sh
 #
-# 默认关闭，需要显式打开：INSTALL_CUDA_TOOLKIT=1 bash download_cuda_toolkit.sh
+# 版本号（$CUDA_VERSION，默认12.8.0）必须跟 install_python_deps.sh 锁定的
+# torch cu128 保持一致，不要随便改成"最新版"——nvcc版本和torch编译时用的CUDA
+# 版本不匹配可能导致运行时不兼容，改torch锁定版本时要联动改这里的默认值。
 #
-# 关键设计（如果启用）：装文件本身不需要GPU在场（只有跑CUDA代码才需要），而且如果
+# 关键设计：装文件本身不需要GPU在场（只有跑CUDA代码才需要），而且如果
 # 装到根分区（默认 /usr/local/cuda），容器重置就会被清空，每次都要重新下载+装一遍
 # （~5.4GB）。这里改成显式装到持久化数据盘（$DATA_DIR/cuda-toolkit），装一次，
 # 跨容器重置永久存活，配合 sources.sh 里的 CUDA_HOME/PATH 设置，重置后不用重装就能直接用。
 set -e
 
-if [ "${INSTALL_CUDA_TOOLKIT:-0}" != "1" ]; then
-    echo "[download_cuda_toolkit] 跳过（默认不装——flash-attn现在用预编译wheel，不需要nvcc；需要就设 INSTALL_CUDA_TOOLKIT=1）"
+if [ "${INSTALL_CUDA_TOOLKIT:-1}" != "1" ]; then
+    echo "[download_cuda_toolkit] 跳过（INSTALL_CUDA_TOOLKIT=0 显式关闭）"
     exit 0
 fi
 
@@ -56,12 +60,14 @@ if [ -x "$TOOLKIT_INSTALL_PATH/bin/nvcc" ] && verify_nvcc; then
     exit 0
 fi
 
-if [ ! -f "$DOWNLOAD_PATH" ]; then
-    echo "[download_cuda_toolkit] 下载 CUDA Toolkit ${CUDA_VERSION}（约5.4GB，存到持久化数据盘: $DOWNLOAD_PATH）..."
-    curl -L -o "$DOWNLOAD_PATH" "$CUDA_URL"
-else
-    echo "[download_cuda_toolkit] 安装包已存在，跳过下载: $DOWNLOAD_PATH"
-fi
+echo "[download_cuda_toolkit] 下载 CUDA Toolkit ${CUDA_VERSION}（约5.4GB，存到持久化数据盘: $DOWNLOAD_PATH）..."
+# -C -：断点续传。之前是"文件存在就跳过下载"，但存在不代表下完了（比如切换
+# 无卡/挂卡模式导致实例重启、连接中断），会把没下完的文件误判成"已存在，跳过"，
+# 后面装的时候才发现是损坏的安装包。改成每次都调用 curl -C -，已经下完的文件
+# curl 自己会识别出本地大小和远端一致直接跳过，没下完的接着上次断点继续下，
+# 不会重新下载已经拿到的部分（2026-07-21：flash-attn 的下载已经用同样的模式，
+# 这里补齐保持一致）。
+curl -L -C - -o "$DOWNLOAD_PATH" "$CUDA_URL"
 
 chmod +x "$DOWNLOAD_PATH"
 

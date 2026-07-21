@@ -40,11 +40,13 @@ GPU_TAG = os.environ.get("GPU_TAG", "unknown_gpu")
 NUM_PROMPTS = int(os.environ.get("NUM_PROMPTS", "8"))        # 固定并发请求数，默认8对齐GRPO的num_generations(rollout N)
 MAX_NEW_TOKENS = int(os.environ.get("MAX_NEW_TOKENS", "1024"))  # 固定生成长度，跨卡保持一致才可比
 OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "/root/rivermind-data/outputs/benchmark_run")
-# 默认关闭：FIXED_PROMPT这道简单数学题模型几百个token内就会遇到EOS提前结束，导致
-# MAX_NEW_TOKENS调多大实际输出token数都不变（2026-07-19实测4096/8192/16384三档
-# 输出token数完全一样，测的其实是同一件事）。开启后用vLLM的ignore_eos强制生成满
-# MAX_NEW_TOKENS，才能真实测出"长上下文"本身对吞吐/显存的影响。
-FORCE_FULL_LENGTH = os.environ.get("FORCE_FULL_LENGTH", "0") == "1"
+# 2026-07-21改为默认开启：FIXED_PROMPT这道简单数学题模型几百个token内就会遇到EOS提前
+# 结束，导致MAX_NEW_TOKENS调多大实际输出token数都不变（2026-07-19实测4096/8192/16384
+# 三档输出token数完全一样，测的其实是同一件事）。用vLLM的ignore_eos强制生成满
+# MAX_NEW_TOKENS，才能真实测出"长上下文"本身对吞吐/显存的影响——默认开等于总是测
+# "最差情况"(worst case，生成拉满不提前停)，benchmark的意义就是摸清这条上限，不想测
+# 最差情况时才需要显式关：FORCE_FULL_LENGTH=0
+FORCE_FULL_LENGTH = os.environ.get("FORCE_FULL_LENGTH", "1") == "1"
 
 # 固定的测试prompt——跨卡用完全一样的输入，保证吞吐数字可比
 FIXED_PROMPT = (

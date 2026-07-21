@@ -11,8 +11,62 @@
 import os
 import time
 import json
+import subprocess
+import threading
 
 _memory_snapshots = {}
+
+
+def query_gpu_memory_and_util():
+    # 跟 train_grpo_benchmark.py 用同一套口径：nvidia-smi 反映真实物理占用，
+    # 比 torch.cuda 的 allocator 统计更可信（尤其是显存快打满/有其他进程共享时）
+    out = subprocess.run(
+        ["nvidia-smi", "--query-gpu=memory.used,utilization.gpu", "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, check=True,
+    )
+    mem_mib, util_pct = out.stdout.strip().splitlines()[0].split(",")
+    return int(mem_mib) / 1024, int(util_pct)  # (GiB, %)
+
+
+class GpuPeakPoller:
+    """后台线程持续轮询nvidia-smi，追踪显存/利用率的峰值+平均值——只在固定时间点各查一次
+    会漏掉生成过程中的瞬时尖峰，真正的峰值只有持续轮询才能抓到。跟train_grpo_benchmark.py
+    同款。2026-07-21新增平均利用率——`utilization.gpu`很容易冲到100%（只要采样窗口内有
+    kernel在跑），峰值口径看不出"纯推理持续繁忙"和"耦合场景vLLM切换留空档"之间的差异，
+    要看全程平均值才能量化这个差异。"""
+
+    def __init__(self, interval_sec=0.3):
+        self.interval_sec = interval_sec
+        self.peak_memory_gb = 0.0
+        self.peak_util_pct = 0
+        self._util_sum = 0
+        self._util_count = 0
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    @property
+    def avg_util_pct(self):
+        return round(self._util_sum / self._util_count, 1) if self._util_count else 0
+
+    def _run(self):
+        while not self._stop.is_set():
+            try:
+                mem_gb, util_pct = query_gpu_memory_and_util()
+                self.peak_memory_gb = max(self.peak_memory_gb, mem_gb)
+                self.peak_util_pct = max(self.peak_util_pct, util_pct)
+                self._util_sum += util_pct
+                self._util_count += 1
+            except Exception:
+                pass
+            self._stop.wait(self.interval_sec)
+
+    def start(self):
+        self._thread.start()
+        return self
+
+    def stop(self):
+        self._stop.set()
+        self._thread.join()
 
 
 def snapshot_memory(tag):
@@ -63,6 +117,8 @@ def main():
     print(f"[config] gpu_tag={GPU_TAG} model={MODEL_PATH} lora_path={LORA_PATH or '(none)'} "
           f"num_prompts={NUM_PROMPTS} max_new_tokens={MAX_NEW_TOKENS}")
 
+    gpu_peak_poller = GpuPeakPoller(interval_sec=0.3).start()
+
     snapshot_memory("00_before_load")
 
     # max_seq_length 要跟着 MAX_NEW_TOKENS 放大（+512给prompt留余量），否则扫描更长
@@ -112,6 +168,7 @@ def main():
     elapsed = time.perf_counter() - t0
 
     snapshot_memory("04_after_generate")
+    gpu_peak_poller.stop()
 
     total_output_tokens = sum(len(tokenizer.encode(o.outputs[0].text)) for o in outputs)
     throughput = total_output_tokens / elapsed
@@ -132,6 +189,11 @@ def main():
         "lora_loaded": bool(LORA_PATH),
         "lora_rank": LORA_RANK if LORA_PATH else None,
         "memory_snapshots_gb": _memory_snapshots,
+        # 后台线程0.3秒轮询nvidia-smi的真实峰值，覆盖整个模型加载+生成生命周期，
+        # 不会漏掉生成过程中的瞬时尖峰——是本次跑里最可信的显存/利用率峰值数字
+        "nvidia_smi_peak_used_gb": round(gpu_peak_poller.peak_memory_gb, 3),
+        "nvidia_smi_peak_util_pct": gpu_peak_poller.peak_util_pct,
+        "nvidia_smi_avg_util_pct": gpu_peak_poller.avg_util_pct,
     }
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -145,6 +207,9 @@ def main():
     print(f"[summary] 纯vLLM推理吞吐: {throughput:.2f} tokens/s")
     print(f"[summary] dtype={model_dtype}, lora_loaded={summary['lora_loaded']}, lora_rank={summary['lora_rank']}")
     print(f"[summary] 显存快照: {json.dumps(_memory_snapshots, indent=2, ensure_ascii=False)}")
+    print(f"[summary] nvidia-smi真实峰值(0.3秒轮询全程追踪): "
+          f"显存={summary['nvidia_smi_peak_used_gb']:.2f}GB "
+          f"峰值利用率={summary['nvidia_smi_peak_util_pct']}% 平均利用率={summary['nvidia_smi_avg_util_pct']}%")
     print(f"[summary] 完整结果已写入: {result_path}")
     print("=" * 60)
 

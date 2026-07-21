@@ -108,16 +108,24 @@ def query_gpu_memory_and_util():
 
 
 class GpuPeakPoller:
-    """后台线程持续轮询nvidia-smi，追踪显存/利用率的峰值——2026-07-19发现只在几个固定
-    时间点各查一次会漏掉训练步骤内部的瞬时尖峰（比如backward传播中间的激活值峰值），
-    真正的峰值只有持续轮询才能抓到。"""
+    """后台线程持续轮询nvidia-smi，追踪显存/利用率的峰值+平均值——2026-07-19发现只在几个
+    固定时间点各查一次会漏掉训练步骤内部的瞬时尖峰（比如backward传播中间的激活值峰值），
+    真正的峰值只有持续轮询才能抓到。2026-07-21新增平均利用率——`utilization.gpu`这个指标
+    本质是"采样窗口内有没有kernel在跑"，很容易冲到100%，峰值口径看不出"耦合场景vLLM切换
+    留出的空档"和"纯推理/纯训练持续繁忙"之间的差异，必须看全程平均值才能量化出这个差异。"""
 
     def __init__(self, interval_sec=0.3):
         self.interval_sec = interval_sec
         self.peak_memory_gb = 0.0
         self.peak_util_pct = 0
+        self._util_sum = 0
+        self._util_count = 0
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
+
+    @property
+    def avg_util_pct(self):
+        return round(self._util_sum / self._util_count, 1) if self._util_count else 0
 
     def _run(self):
         while not self._stop.is_set():
@@ -125,6 +133,8 @@ class GpuPeakPoller:
                 mem_gb, util_pct = query_gpu_memory_and_util()
                 self.peak_memory_gb = max(self.peak_memory_gb, mem_gb)
                 self.peak_util_pct = max(self.peak_util_pct, util_pct)
+                self._util_sum += util_pct
+                self._util_count += 1
             except Exception:
                 pass
             self._stop.wait(self.interval_sec)
@@ -458,6 +468,7 @@ def main():
         # 生命周期，不会漏掉训练步骤内部的瞬时尖峰——是本次跑里最可信的显存/利用率峰值数字
         "nvidia_smi_peak_used_gb": round(_gpu_peak_poller.peak_memory_gb, 3),
         "nvidia_smi_peak_util_pct": _gpu_peak_poller.peak_util_pct,
+        "nvidia_smi_avg_util_pct": _gpu_peak_poller.avg_util_pct,
         "memory_snapshots_gb": _memory_snapshots,
         "raw_step_timings": _step_timings,
     }
@@ -475,7 +486,8 @@ def main():
           if avg_generate is not None else "[summary] 没有采集到有效的稳态step数据")
     print(f"[summary] 显存快照: {json.dumps(_memory_snapshots, indent=2, ensure_ascii=False)}")
     print(f"[summary] nvidia-smi真实峰值(0.3秒轮询全程追踪): "
-          f"显存={summary['nvidia_smi_peak_used_gb']:.2f}GB 利用率={summary['nvidia_smi_peak_util_pct']}%")
+          f"显存={summary['nvidia_smi_peak_used_gb']:.2f}GB "
+          f"峰值利用率={summary['nvidia_smi_peak_util_pct']}% 平均利用率={summary['nvidia_smi_avg_util_pct']}%")
     print(f"[summary] 完整结果已写入: {result_path}")
     print("=" * 60)
 

@@ -21,8 +21,57 @@ import os
 import time
 import json
 import sys
+import subprocess
+import threading
 
 sys.stdout.reconfigure(line_buffering=True)
+
+
+def query_gpu_memory_and_util():
+    out = subprocess.run(
+        ["nvidia-smi", "--query-gpu=memory.used,utilization.gpu", "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, check=True,
+    )
+    mem_mib, util_pct = out.stdout.strip().splitlines()[0].split(",")
+    return int(mem_mib) / 1024, int(util_pct)  # (GiB, %)
+
+
+class GpuPeakPoller:
+    """后台线程持续轮询nvidia-smi，追踪显存/利用率的峰值+平均值。跟train_grpo_benchmark.py/
+    vllm_throughput_benchmark.py同款，2026-07-21补齐到这个脚本。"""
+
+    def __init__(self, interval_sec=0.3):
+        self.interval_sec = interval_sec
+        self.peak_memory_gb = 0.0
+        self.peak_util_pct = 0
+        self._util_sum = 0
+        self._util_count = 0
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    @property
+    def avg_util_pct(self):
+        return round(self._util_sum / self._util_count, 1) if self._util_count else 0
+
+    def _run(self):
+        while not self._stop.is_set():
+            try:
+                mem_gb, util_pct = query_gpu_memory_and_util()
+                self.peak_memory_gb = max(self.peak_memory_gb, mem_gb)
+                self.peak_util_pct = max(self.peak_util_pct, util_pct)
+                self._util_sum += util_pct
+                self._util_count += 1
+            except Exception:
+                pass
+            self._stop.wait(self.interval_sec)
+
+    def start(self):
+        self._thread.start()
+        return self
+
+    def stop(self):
+        self._stop.set()
+        self._thread.join()
 
 MODEL_PATH = os.environ.get("MODEL_PATH", "/root/rivermind-data/models/DeepSeek-R1-Distill-Qwen-1.5B")
 DATA_PATH = os.environ.get(
@@ -70,6 +119,8 @@ def main():
           f"seq_length={SEQ_LENGTH} benchmark_steps={BENCHMARK_STEPS} load_vllm_engine={LOAD_VLLM_ENGINE} "
           f"training_kernels=unsloth（forward/backward全程走FastLanguageModel patch过的Triton kernel，"
           f"跟是否使用真实数据/是否调用生成无关）")
+
+    gpu_peak_poller = GpuPeakPoller(interval_sec=0.3).start()
 
     snapshot_memory("00_before_load")
 
@@ -147,6 +198,7 @@ def main():
         print(f"[timing] step={step} total={elapsed:.2f}s loss={loss.item():.4f}")
 
     snapshot_memory("04_after_training_steps")
+    gpu_peak_poller.stop()
 
     # 跳过第一步（有编译/初始化开销），只用稳态耗时
     steady = step_timings[1:] if len(step_timings) > 1 else step_timings
@@ -165,6 +217,9 @@ def main():
         "avg_steady_state_seconds": avg_step,
         "memory_snapshots_gb": _memory_snapshots,
         "raw_step_timings": step_timings,
+        "nvidia_smi_peak_used_gb": round(gpu_peak_poller.peak_memory_gb, 3),
+        "nvidia_smi_peak_util_pct": gpu_peak_poller.peak_util_pct,
+        "nvidia_smi_avg_util_pct": gpu_peak_poller.avg_util_pct,
     }
 
     os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -177,6 +232,9 @@ def main():
     print(f"[summary] 稳态单步耗时（vLLM常驻但不生成，跳过首步）: "
           f"{avg_step:.3f}s" if avg_step is not None else "[summary] 没有采集到有效数据")
     print(f"[summary] 显存快照: {json.dumps(_memory_snapshots, indent=2, ensure_ascii=False)}")
+    print(f"[summary] nvidia-smi真实峰值(0.3秒轮询全程追踪): "
+          f"显存={summary['nvidia_smi_peak_used_gb']:.2f}GB "
+          f"峰值利用率={summary['nvidia_smi_peak_util_pct']}% 平均利用率={summary['nvidia_smi_avg_util_pct']}%")
     print(f"[summary] 完整结果已写入: {result_path}")
     print("=" * 60)
 

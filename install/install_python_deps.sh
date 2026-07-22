@@ -65,17 +65,17 @@ fi
 # 全部放进同一条 uv pip install，让依赖解析器同时看到所有约束，避免分次装时后装的包
 # 静默破坏前面的版本约束
 if [ "$SKIP_TORCH_REINSTALL" = true ]; then
-    uv pip install --system -qqq -i "$PYPI_MIRROR" \
+    uv pip install $UV_PYTHON_TARGET_FLAG -qqq -i "$PYPI_MIRROR" \
         'transformers>=4.55.2,<5.0.0' "$VLLM_PKG" "$UNSLOTH_PKG" \
         trl peft accelerate bitsandbytes xformers torchvision numpy pillow \
         modelscope huggingface_hub wandb gpustat
 else
-    uv pip install --system -qqq -i "$PYPI_MIRROR" --upgrade \
+    uv pip install $UV_PYTHON_TARGET_FLAG -qqq -i "$PYPI_MIRROR" --upgrade \
         "$TORCH_CONSTRAINT" 'transformers>=4.55.2,<5.0.0' "$VLLM_PKG" "$UNSLOTH_PKG" \
         trl peft accelerate bitsandbytes xformers torchvision numpy pillow \
         modelscope huggingface_hub wandb gpustat
 fi
-uv pip install --system -qqq -i "$PYPI_MIRROR" "$TRITON_PKG"
+uv pip install $UV_PYTHON_TARGET_FLAG -qqq -i "$PYPI_MIRROR" "$TRITON_PKG"
 
 echo "[install_python_deps] 完成："
 python3 -c "

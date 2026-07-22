@@ -71,7 +71,7 @@ for PREFIX in "" $GITHUB_RELEASE_PROXY_CHAIN; do
             DOWNLOADED_SIZE=$(stat -c%s "$WHEEL_TMP" 2>/dev/null || stat -f%z "$WHEEL_TMP" 2>/dev/null || echo 0)
             if [ "$DOWNLOADED_SIZE" -gt 10000000 ]; then  # 至少10MB，防止下到一个错误页面当成功
                 echo "[install_flash_attn] 下载完成（${DOWNLOADED_SIZE} 字节），来源: ${SRC_NAME}"
-                if uv pip install --system "$WHEEL_TMP" > "$FLASH_ATTN_LOG" 2>&1; then
+                if uv pip install $UV_PYTHON_TARGET_FLAG "$WHEEL_TMP" > "$FLASH_ATTN_LOG" 2>&1; then
                     echo "[install_flash_attn] ✅ 预编译wheel安装成功"
                     INSTALLED=true
                 else

@@ -34,6 +34,6 @@ fi
 echo "uv: $(uv --version)"
 
 if ! python3 -c "import modelscope" >/dev/null 2>&1; then
-    uv pip install --system -qqq -i "$PYPI_MIRROR" modelscope huggingface_hub
+    uv pip install $UV_PYTHON_TARGET_FLAG -qqq -i "$PYPI_MIRROR" modelscope huggingface_hub
 fi
 echo "[bootstrap_uv] 完成"

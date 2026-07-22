@@ -31,7 +31,7 @@ export HF_HUB_DISABLE_XET="${HF_HUB_DISABLE_XET:-1}"  # 部分hf-mirror节点转
 # ---- 模型下载优先级：能在 ModelScope 找到的模型优先走 ModelScope（国内速度更快，
 #      且不依赖 HF_ENDPOINT 镜像的可用性）；HF专属资源（比如这次的DAPO-Math-17k数据集，
 #      ModelScope上没有镜像）才走 huggingface_hub，经上面的 HF_ENDPOINT 镜像下载 ----
-export PREFER_MODELSCOPE_FOR_MODELS=true
+export PREFER_MODELSCOPE_FOR_MODELS="${PREFER_MODELSCOPE_FOR_MODELS:-true}"
 
 # ---- GitHub：先探测直连，不通再走这个代理前缀（每台实例网络环境不一样，不能假设一致） ----
 export GITHUB_PROXY_PREFIX="${GITHUB_PROXY_PREFIX:-https://ghfast.top/}"
@@ -59,15 +59,61 @@ export UV_CACHE_DIR="${UV_CACHE_DIR:-$_SOURCES_DATA_DIR/.cache/uv}"
 export PIP_CACHE_DIR="${PIP_CACHE_DIR:-$_SOURCES_DATA_DIR/.cache/pip}"
 mkdir -p "$UV_CACHE_DIR" "$PIP_CACHE_DIR"
 
-# ---- CUDA Toolkit（可选，装到持久化数据盘的话，重置后自动可用，不用重装）----
+# ---- Python 环境：--system 还是 venv，取决于当前用户能不能写系统 site-packages ----
+# 云端租用实例通常是容器里的root，能直接写系统site-packages，用--system最简单。
+# 但真机/个人长期机器（如kelvin-linux）跑的是普通用户，且现代Debian/Ubuntu的Python
+# 默认是PEP668 "externally-managed"，`uv pip install --system`会被直接拒绝
+# （2026-07-21在kelvin-linux上实测：报错"error: The interpreter at /usr is externally
+# managed"，即使加--break-system-packages绕过这个限制，dist-packages目录本身是
+# root所有，普通用户依然Permission denied）。这里自动探测：能写系统site-packages
+# 就用--system（跟之前云端实例行为完全一致，不改变现有脚本习惯）；不能写就在数据盘
+# 建一个venv，所有uv pip install改用`--python $VENV_PYTHON`而不是`--system`。
+_SOURCES_DATA_DIR_FOR_VENV="${DATA_DIR:-/root/rivermind-data}"
+_SITE_PACKAGES_DIR=$(python3 -c "import sysconfig; print(sysconfig.get_path('purelib'))" 2>/dev/null)
+if [ -n "$_SITE_PACKAGES_DIR" ] && [ -w "$_SITE_PACKAGES_DIR" ]; then
+    export UV_PYTHON_TARGET_FLAG="--system"
+    export UV_PYTHON_BIN="python3"
+else
+    export UV_VENV_DIR="${UV_VENV_DIR:-$_SOURCES_DATA_DIR_FOR_VENV/venv}"
+    if [ ! -x "$UV_VENV_DIR/bin/python3" ]; then
+        mkdir -p "$(dirname "$UV_VENV_DIR")"
+        # 优先用uv自己建venv（更快），uv还没装好时退回系统venv模块
+        if command -v uv >/dev/null 2>&1; then
+            uv venv "$UV_VENV_DIR" --python python3 >&2
+        else
+            python3 -m venv "$UV_VENV_DIR" >&2
+        fi
+    fi
+    export UV_PYTHON_TARGET_FLAG="--python $UV_VENV_DIR/bin/python3"
+    export UV_PYTHON_BIN="$UV_VENV_DIR/bin/python3"
+    export PATH="$UV_VENV_DIR/bin:$PATH"
+fi
+
+# ---- CUDA Toolkit：优先用数据盘持久化装的，其次探测系统自带的（真机常见，见下）----
 # 如果之前跑过 download_cuda_toolkit.sh（INSTALL_CUDA_TOOLKIT=1），nvcc 会装在
 # $DATA_DIR/cuda-toolkit（持久化，跨容器重置存活）。这里自动探测，装了就接进PATH/CUDA_HOME，
-# 没装就跳过——不需要每次都手动设置，也不会因为没装而报错
+# 没装就跳过——不需要每次都手动设置，也不会因为没装而报错。
+# 2026-07-22在kelvin-linux（真机+Tailscale连接，非云端租用容器）上发现：系统本身已经
+# 装了CUDA Toolkit（/usr/local/cuda-12.6/bin/nvcc），但没在默认PATH里，之前只探测数据盘
+# 那条路径，导致gpu-burn编译时`command -v nvcc`找不到、cublas_v2.h报错。补一条系统路径
+# 的探测（/usr/local/cuda/bin，标准CUDA安装的PATH约定，通常是个指向具体版本的符号链接）。
 _CUDA_TOOLKIT_PATH="$_SOURCES_DATA_DIR/cuda-toolkit"
 if [ -x "$_CUDA_TOOLKIT_PATH/bin/nvcc" ]; then
     export CUDA_HOME="$_CUDA_TOOLKIT_PATH"
     export PATH="$_CUDA_TOOLKIT_PATH/bin:$PATH"
     export LD_LIBRARY_PATH="$_CUDA_TOOLKIT_PATH/lib64:$LD_LIBRARY_PATH"
+elif command -v nvcc >/dev/null 2>&1; then
+    : # 已经在PATH里，不用额外处理
+elif [ -x /usr/local/cuda/bin/nvcc ]; then
+    export CUDA_HOME="/usr/local/cuda"
+    export PATH="/usr/local/cuda/bin:$PATH"
+    export LD_LIBRARY_PATH="/usr/local/cuda/lib64:$LD_LIBRARY_PATH"
+fi
+
+if [ "$UV_PYTHON_TARGET_FLAG" = "--system" ]; then
+    echo "[sources] Python目标: --system（系统site-packages可写，跟云端root容器一致）"
+else
+    echo "[sources] Python目标: venv $UV_VENV_DIR（系统site-packages不可写，如真机非root用户/PEP668限制）"
 fi
 
 echo "[sources] PYPI_MIRROR=$PYPI_MIRROR"

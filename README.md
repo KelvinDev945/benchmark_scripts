@@ -94,6 +94,12 @@ benchmark_scripts/
   导致 Step 2 的 Unsloth 模型加载直接失败。跟 uv 装的 python 包无关，是系统镜像缺开发头
   文件，装对应系统Python版本的 `python3-dev`（如 `apt-get install -y python3-dev`）即可，
   这个操作本身在挂卡前后都能做（不需要GPU），建议以后并入 Step 1。
+- **非root用户 / 真机（非云端租用容器）自动切venv**——2026-07-22在真实裸机(kelvin-linux)
+  上发现：非root用户+现代Debian/Ubuntu默认PEP668 "externally-managed"限制下，
+  `uv pip install --system`会直接报错拒绝，即使绕过限制也会因为`dist-packages`目录
+  root权限而`Permission denied`。`sources.sh`已加自动探测：能写系统site-packages（云端
+  容器root场景）就用`--system`，不能写就在数据盘用`uv venv`建虚拟环境，所有脚本改用
+  `$UV_PYTHON_TARGET_FLAG`变量而不是硬编码`--system`，两种环境都兼容，不需要手动配置。
 
 ## 快速开始
 

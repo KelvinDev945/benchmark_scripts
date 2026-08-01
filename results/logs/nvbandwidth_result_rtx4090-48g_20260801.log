@@ -1,0 +1,416 @@
+[sources] Python目标: --system（系统site-packages可写，跟云端root容器一致）
+[sources] PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
+[sources] HF_ENDPOINT=https://hf-mirror.com (HF_HUB_DISABLE_XET=1)
+[sources] GITHUB_PROXY_PREFIX=https://ghfast.top/ (仅在直连不可用时使用)
+[sources] GITHUB_RELEASE_PROXY_CHAIN=https://gh-proxy.com/ https://ghfast.top/ (Release大文件下载专用，直连太慢/失败时依次尝试)
+[sources] PREFER_MODELSCOPE_FOR_MODELS=true
+[sources] UV_CACHE_DIR=/root/rivermind-data/.cache/uv | PIP_CACHE_DIR=/root/rivermind-data/.cache/pip（持久化数据盘，跨容器重置存活）
+[sources] 检测到持久化CUDA Toolkit: CUDA_HOME=/root/rivermind-data/cuda-toolkit
+=== 安装依赖 ===
+
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+
+Get:1 https://mirrors.aliyun.com/ubuntu jammy InRelease [270 kB]
+Get:2 https://mirrors.aliyun.com/ubuntu jammy-security InRelease [129 kB]
+Get:3 https://mirrors.aliyun.com/ubuntu jammy-updates InRelease [128 kB]
+Get:4 https://mirrors.aliyun.com/ubuntu jammy-backports InRelease [127 kB]
+Get:5 http://archive.ubuntu.com/ubuntu noble InRelease [256 kB]
+Get:6 https://mirrors.aliyun.com/ubuntu jammy/main Sources [1,668 kB]
+Get:7 http://security.ubuntu.com/ubuntu noble-security InRelease [126 kB]
+Get:8 https://mirrors.aliyun.com/ubuntu jammy/universe Sources [22.0 MB]
+Get:10 http://archive.ubuntu.com/ubuntu noble-updates InRelease [126 kB]
+Get:9 https://developer.download.nvidia.cn/compute/cuda/repos/ubuntu2204/x86_64  InRelease [1,581 B]
+Get:11 https://developer.download.nvidia.cn/compute/cuda/repos/ubuntu2204/x86_64  Packages [2,861 kB]
+Get:12 http://archive.ubuntu.com/ubuntu noble-backports InRelease [126 kB]
+Get:13 http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages [19.3 MB]
+Get:14 http://security.ubuntu.com/ubuntu noble-security/main amd64 Packages [1,110 kB]
+Get:15 https://mirrors.aliyun.com/ubuntu jammy/restricted Sources [28.2 kB]
+Get:16 https://mirrors.aliyun.com/ubuntu jammy/multiverse Sources [361 kB]
+Get:17 https://mirrors.aliyun.com/ubuntu jammy/restricted amd64 Packages [164 kB]
+Get:18 https://mirrors.aliyun.com/ubuntu jammy/universe amd64 Packages [17.5 MB]
+Get:19 http://security.ubuntu.com/ubuntu noble-security/restricted amd64 Packages [1,587 kB]
+Get:20 http://security.ubuntu.com/ubuntu noble-security/multiverse amd64 Packages [50.0 kB]
+Get:21 http://security.ubuntu.com/ubuntu noble-security/universe amd64 Packages [1,522 kB]
+Get:22 https://mirrors.aliyun.com/ubuntu jammy/main amd64 Packages [1,792 kB]
+Get:23 https://mirrors.aliyun.com/ubuntu jammy/multiverse amd64 Packages [266 kB]
+Get:24 https://mirrors.aliyun.com/ubuntu jammy-security/universe Sources [324 kB]
+Get:25 https://mirrors.aliyun.com/ubuntu jammy-security/multiverse Sources [29.5 kB]
+Get:26 https://mirrors.aliyun.com/ubuntu jammy-security/restricted Sources [90.2 kB]
+Get:27 https://mirrors.aliyun.com/ubuntu jammy-security/main Sources [384 kB]
+Get:28 https://mirrors.aliyun.com/ubuntu jammy-security/universe amd64 Packages [1,314 kB]
+Get:29 https://mirrors.aliyun.com/ubuntu jammy-security/main amd64 Packages [4,155 kB]
+Get:30 https://mirrors.aliyun.com/ubuntu jammy-security/multiverse amd64 Packages [84.1 kB]
+Get:31 https://mirrors.aliyun.com/ubuntu jammy-security/restricted amd64 Packages [7,479 kB]
+Get:32 https://mirrors.aliyun.com/ubuntu jammy-updates/main Sources [588 kB]
+Get:33 https://mirrors.aliyun.com/ubuntu jammy-updates/restricted Sources [94.6 kB]
+Get:34 https://mirrors.aliyun.com/ubuntu jammy-updates/multiverse Sources [39.1 kB]
+Get:35 https://mirrors.aliyun.com/ubuntu jammy-updates/universe Sources [493 kB]
+Get:36 https://mirrors.aliyun.com/ubuntu jammy-updates/main amd64 Packages [4,488 kB]
+Get:37 https://mirrors.aliyun.com/ubuntu jammy-updates/restricted amd64 Packages [7,770 kB]
+Get:38 https://mirrors.aliyun.com/ubuntu jammy-updates/multiverse amd64 Packages [92.7 kB]
+Get:39 https://mirrors.aliyun.com/ubuntu jammy-updates/universe amd64 Packages [1,616 kB]
+Get:40 https://mirrors.aliyun.com/ubuntu jammy-backports/universe Sources [11.4 kB]
+Get:41 https://mirrors.aliyun.com/ubuntu jammy-backports/main Sources [9,389 B]
+Get:42 https://mirrors.aliyun.com/ubuntu jammy-backports/universe amd64 Packages [35.6 kB]
+Get:43 https://mirrors.aliyun.com/ubuntu jammy-backports/main amd64 Packages [82.8 kB]
+Get:44 http://archive.ubuntu.com/ubuntu noble/main amd64 Packages [1,808 kB]
+Get:45 http://archive.ubuntu.com/ubuntu noble/multiverse amd64 Packages [331 kB]
+Get:46 http://archive.ubuntu.com/ubuntu noble/restricted amd64 Packages [117 kB]
+Get:47 http://archive.ubuntu.com/ubuntu noble-updates/restricted amd64 Packages [1,700 kB]
+Get:48 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages [1,433 kB]
+Get:49 http://archive.ubuntu.com/ubuntu noble-updates/multiverse amd64 Packages [55.8 kB]
+Get:50 http://archive.ubuntu.com/ubuntu noble-updates/universe amd64 Packages [2,138 kB]
+Get:51 http://archive.ubuntu.com/ubuntu noble-backports/multiverse amd64 Packages [671 B]
+Get:52 http://archive.ubuntu.com/ubuntu noble-backports/main amd64 Packages [48.9 kB]
+Get:53 http://archive.ubuntu.com/ubuntu noble-backports/universe amd64 Packages [37.7 kB]
+Fetched 108 MB in 47s (2,294 kB/s)
+Reading package lists...
+Building dependency tree...
+Reading state information...
+109 packages can be upgraded. Run 'apt list --upgradable' to see them.
+W: https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/InRelease: Key is stored in legacy trusted.gpg keyring (/etc/apt/trusted.gpg), see the DEPRECATION section in apt-key(8) for details.
+
+WARNING: apt does not have a stable CLI interface. Use with caution in scripts.
+
+Reading package lists...
+Building dependency tree...
+Reading state information...
+The following additional packages will be installed:
+  cmake-data libarchive13t64 libboost-program-options1.83-dev
+  libboost-program-options1.83.0 libboost1.83-dev libjsoncpp25 librhash0
+  libuv1t64
+Suggested packages:
+  cmake-doc cmake-format elpa-cmake-mode lrzip libboost1.83-doc
+  libboost-atomic1.83-dev libboost-chrono1.83-dev libboost-container1.83-dev
+  libboost-context1.83-dev libboost-contract1.83-dev
+  libboost-coroutine1.83-dev libboost-date-time1.83-dev
+  libboost-exception1.83-dev libboost-fiber1.83-dev
+  libboost-filesystem1.83-dev libboost-graph-parallel1.83-dev
+  libboost-graph1.83-dev libboost-iostreams1.83-dev libboost-json1.83-dev
+  libboost-locale1.83-dev libboost-log1.83-dev libboost-math1.83-dev
+  libboost-mpi-python1.83-dev libboost-mpi1.83-dev libboost-nowide1.83-dev
+  libboost-numpy1.83-dev libboost-python1.83-dev libboost-random1.83-dev
+  libboost-regex1.83-dev libboost-serialization1.83-dev
+  libboost-stacktrace1.83-dev libboost-system1.83-dev libboost-test1.83-dev
+  libboost-thread1.83-dev libboost-timer1.83-dev libboost-type-erasure1.83-dev
+  libboost-url1.83-dev libboost-wave1.83-dev libboost1.83-tools-dev
+  libmpfrc++-dev libntl-dev
+The following NEW packages will be installed:
+  cmake cmake-data libarchive13t64 libboost-program-options-dev
+  libboost-program-options1.83-dev libboost-program-options1.83.0
+  libboost1.83-dev libjsoncpp25 librhash0 libuv1t64
+0 upgraded, 10 newly installed, 0 to remove and 109 not upgraded.
+Need to get 25.5 MB of archives.
+After this operation, 217 MB of additional disk space will be used.
+Get:1 http://archive.ubuntu.com/ubuntu noble/main amd64 libuv1t64 amd64 1.48.0-1.1build1 [97.3 kB]
+Get:2 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libarchive13t64 amd64 3.7.2-2ubuntu0.8 [383 kB]
+Get:3 http://archive.ubuntu.com/ubuntu noble/main amd64 libjsoncpp25 amd64 1.9.5-6build1 [82.8 kB]
+Get:4 http://archive.ubuntu.com/ubuntu noble/main amd64 librhash0 amd64 1.4.3-3build1 [129 kB]
+Get:5 http://archive.ubuntu.com/ubuntu noble/main amd64 cmake-data all 3.28.3-1build7 [2,155 kB]
+Get:6 http://archive.ubuntu.com/ubuntu noble/main amd64 cmake amd64 3.28.3-1build7 [11.2 MB]
+Get:7 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libboost1.83-dev amd64 1.83.0-2.1ubuntu3.2 [10.7 MB]
+Get:8 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libboost-program-options1.83.0 amd64 1.83.0-2.1ubuntu3.2 [321 kB]
+Get:9 http://archive.ubuntu.com/ubuntu noble-updates/main amd64 libboost-program-options1.83-dev amd64 1.83.0-2.1ubuntu3.2 [388 kB]
+Get:10 http://archive.ubuntu.com/ubuntu noble/main amd64 libboost-program-options-dev amd64 1.83.0.1ubuntu2 [4,086 B]
+debconf: delaying package configuration, since apt-utils is not installed
+Fetched 25.5 MB in 1min 28s (290 kB/s)
+Selecting previously unselected package libuv1t64:amd64.
+(Reading database ... (Reading database ... 5%(Reading database ... 10%(Reading database ... 15%(Reading database ... 20%(Reading database ... 25%(Reading database ... 30%(Reading database ... 35%(Reading database ... 40%(Reading database ... 45%(Reading database ... 50%(Reading database ... 55%(Reading database ... 60%(Reading database ... 65%(Reading database ... 70%(Reading database ... 75%(Reading database ... 80%(Reading database ... 85%(Reading database ... 90%(Reading database ... 95%(Reading database ... 100%(Reading database ... 47711 files and directories currently installed.)
+Preparing to unpack .../0-libuv1t64_1.48.0-1.1build1_amd64.deb ...
+Unpacking libuv1t64:amd64 (1.48.0-1.1build1) ...
+Selecting previously unselected package libarchive13t64:amd64.
+Preparing to unpack .../1-libarchive13t64_3.7.2-2ubuntu0.8_amd64.deb ...
+Unpacking libarchive13t64:amd64 (3.7.2-2ubuntu0.8) ...
+Selecting previously unselected package libjsoncpp25:amd64.
+Preparing to unpack .../2-libjsoncpp25_1.9.5-6build1_amd64.deb ...
+Unpacking libjsoncpp25:amd64 (1.9.5-6build1) ...
+Selecting previously unselected package librhash0:amd64.
+Preparing to unpack .../3-librhash0_1.4.3-3build1_amd64.deb ...
+Unpacking librhash0:amd64 (1.4.3-3build1) ...
+Selecting previously unselected package cmake-data.
+Preparing to unpack .../4-cmake-data_3.28.3-1build7_all.deb ...
+Unpacking cmake-data (3.28.3-1build7) ...
+Selecting previously unselected package cmake.
+Preparing to unpack .../5-cmake_3.28.3-1build7_amd64.deb ...
+Unpacking cmake (3.28.3-1build7) ...
+Selecting previously unselected package libboost1.83-dev:amd64.
+Preparing to unpack .../6-libboost1.83-dev_1.83.0-2.1ubuntu3.2_amd64.deb ...
+Unpacking libboost1.83-dev:amd64 (1.83.0-2.1ubuntu3.2) ...
+Selecting previously unselected package libboost-program-options1.83.0:amd64.
+Preparing to unpack .../7-libboost-program-options1.83.0_1.83.0-2.1ubuntu3.2_amd64.deb ...
+Unpacking libboost-program-options1.83.0:amd64 (1.83.0-2.1ubuntu3.2) ...
+Selecting previously unselected package libboost-program-options1.83-dev:amd64.
+Preparing to unpack .../8-libboost-program-options1.83-dev_1.83.0-2.1ubuntu3.2_amd64.deb ...
+Unpacking libboost-program-options1.83-dev:amd64 (1.83.0-2.1ubuntu3.2) ...
+Selecting previously unselected package libboost-program-options-dev:amd64.
+Preparing to unpack .../9-libboost-program-options-dev_1.83.0.1ubuntu2_amd64.deb ...
+Unpacking libboost-program-options-dev:amd64 (1.83.0.1ubuntu2) ...
+Setting up libboost-program-options1.83.0:amd64 (1.83.0-2.1ubuntu3.2) ...
+Setting up libboost1.83-dev:amd64 (1.83.0-2.1ubuntu3.2) ...
+Setting up libuv1t64:amd64 (1.48.0-1.1build1) ...
+Setting up libboost-program-options1.83-dev:amd64 (1.83.0-2.1ubuntu3.2) ...
+Setting up libboost-program-options-dev:amd64 (1.83.0.1ubuntu2) ...
+Setting up libjsoncpp25:amd64 (1.9.5-6build1) ...
+Setting up librhash0:amd64 (1.4.3-3build1) ...
+Setting up cmake-data (3.28.3-1build7) ...
+Setting up libarchive13t64:amd64 (3.7.2-2ubuntu0.8) ...
+Setting up cmake (3.28.3-1build7) ...
+Processing triggers for libc-bin (2.39-0ubuntu8.7) ...
+=== clone + 编译 nvbandwidth ===
+Cloning into '/root/rivermind-data/tools/nvbandwidth'...
+-- The CUDA compiler identification is NVIDIA 12.8.61 with host compiler GNU 13.3.0
+-- The CXX compiler identification is GNU 13.3.0
+-- Detecting CUDA compiler ABI info
+-- Detecting CUDA compiler ABI info - done
+-- Check for working CUDA compiler: /root/rivermind-data/cuda-toolkit/bin/nvcc - skipped
+-- Detecting CUDA compile features
+-- Detecting CUDA compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Detecting underlying CUDA Arch from GPU to set CMAKE_CUDA_ARCHITECTURES
+-- Failed auto detection of gpu-archs. Falling back to using 52;70;75;80;86;89;90;100.
+-- Performing Test NVBW_HAVE_NVML_CONF_COMPUTE_SETTINGS
+-- Performing Test NVBW_HAVE_NVML_CONF_COMPUTE_SETTINGS - Success
+CMake Warning (dev) at /usr/local/lib/python3.12/dist-packages/cmake/data/share/cmake-4.2/Modules/FetchContent.cmake:1383 (message):
+  The DOWNLOAD_EXTRACT_TIMESTAMP option was not given and policy CMP0135 is
+  not set.  The policy's OLD behavior will be used.  When using a URL
+  download, the timestamps of extracted files should preferably be that of
+  the time of extraction, otherwise code that depends on the extracted
+  contents might not be rebuilt if the URL changes.  The OLD behavior
+  preserves the timestamps from the archive instead, but this is usually not
+  what you want.  Update your project to the NEW behavior or specify the
+  DOWNLOAD_EXTRACT_TIMESTAMP option with a value of true to avoid this
+  robustness issue.
+Call Stack (most recent call first):
+  CMakeLists.txt:76 (FetchContent_Declare)
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Configuring done (11.5s)
+-- Generating done (0.0s)
+-- Build files have been written to: /root/rivermind-data/tools/nvbandwidth/build
+[  7%] Building CXX object CMakeFiles/nvbandwidth.dir/cuda_version_check.cpp.o
+[ 21%] Building CXX object CMakeFiles/nvbandwidth.dir/testcase.cpp.o
+[ 28%] Building CXX object CMakeFiles/nvbandwidth.dir/testcases.cpp.o
+[ 28%] Building CXX object CMakeFiles/nvbandwidth.dir/environment.cpp.o
+[ 35%] Building CUDA object CMakeFiles/nvbandwidth.dir/kernels.cu.o
+nvcc warning : Support for offline compilation for architectures prior to '<compute/sm/lto>_75' will be removed in a future release (Use -Wno-deprecated-gpu-targets to suppress warning).
+[ 42%] Building CXX object CMakeFiles/nvbandwidth.dir/memcpy.cpp.o
+[ 50%] Building CXX object CMakeFiles/nvbandwidth.dir/nvbandwidth.cpp.o
+[ 57%] Building CXX object CMakeFiles/nvbandwidth.dir/multinode_memcpy.cpp.o
+[ 64%] Building CXX object CMakeFiles/nvbandwidth.dir/multinode_testcases.cpp.o
+[ 71%] Building CXX object CMakeFiles/nvbandwidth.dir/output.cpp.o
+[ 78%] Building CXX object CMakeFiles/nvbandwidth.dir/json_output.cpp.o
+[ 85%] Building CXX object CMakeFiles/nvbandwidth.dir/perf_parser_output.cpp.o
+[ 92%] Building CXX object CMakeFiles/nvbandwidth.dir/json/jsoncpp.cpp.o
+[100%] Linking CXX executable nvbandwidth
+[100%] Built target nvbandwidth
+=== 运行 nvbandwidth（结果存到持久化数据盘: /root/rivermind-data/benchmark_results） ===
+nvbandwidth Version: v0.10.0
+Built from Git version: v0.10
+
+CUDA Runtime Version: 12.8 (12080)
+CUDA Driver Version (API): 13.0 (13000)
+Driver Version: 580.119.02
+
+jupyter-r2ud9w87vvmvznzc
+Device 0: NVIDIA GeForce RTX 4090 (00000000:d8:00)
+
+Running host_to_device_memcpy_ce.
+memcpy CE CPU(row) -> GPU(column) bandwidth (GB/s)
+           0
+ 0     25.09
+
+SUM host_to_device_memcpy_ce 25.09
+COEFFICIENT_OF_VARIATION host_to_device_memcpy_ce 0.00
+
+Running device_to_host_memcpy_ce.
+memcpy CE CPU(row) <- GPU(column) bandwidth (GB/s)
+           0
+ 0     26.28
+
+SUM device_to_host_memcpy_ce 26.28
+COEFFICIENT_OF_VARIATION device_to_host_memcpy_ce 0.00
+
+Running host_to_device_bidirectional_memcpy_ce.
+memcpy CE CPU(row) <-> GPU(column) bandwidth (GB/s)
+           0
+ 0     22.61
+
+SUM host_to_device_bidirectional_memcpy_ce 22.61
+COEFFICIENT_OF_VARIATION host_to_device_bidirectional_memcpy_ce 0.00
+
+Running device_to_host_bidirectional_memcpy_ce.
+memcpy CE CPU(row) <-> GPU(column) bandwidth (GB/s)
+           0
+ 0     22.62
+
+SUM device_to_host_bidirectional_memcpy_ce 22.62
+COEFFICIENT_OF_VARIATION device_to_host_bidirectional_memcpy_ce 0.00
+
+Waived device_to_device_memcpy_read_ce: no accessible peer GPU pairs (P2P not supported between any devices)
+Waived device_to_device_memcpy_write_ce: no accessible peer GPU pairs (P2P not supported between any devices)
+Waived device_to_device_bidirectional_memcpy_read_ce: no accessible peer GPU pairs (P2P not supported between any devices)
+Waived device_to_device_bidirectional_memcpy_write_ce: no accessible peer GPU pairs (P2P not supported between any devices)
+Running all_to_host_memcpy_ce.
+memcpy CE CPU(row) <- GPU(column) bandwidth (GB/s)
+           0
+ 0     26.28
+
+SUM all_to_host_memcpy_ce 26.28
+COEFFICIENT_OF_VARIATION all_to_host_memcpy_ce 0.00
+
+Running all_to_host_bidirectional_memcpy_ce.
+memcpy CE CPU(row) <-> GPU(column) bandwidth (GB/s)
+           0
+ 0     22.62
+
+SUM all_to_host_bidirectional_memcpy_ce 22.62
+COEFFICIENT_OF_VARIATION all_to_host_bidirectional_memcpy_ce 0.00
+
+Running host_to_all_memcpy_ce.
+memcpy CE CPU(row) -> GPU(column) bandwidth (GB/s)
+           0
+ 0     25.09
+
+SUM host_to_all_memcpy_ce 25.09
+COEFFICIENT_OF_VARIATION host_to_all_memcpy_ce 0.00
+
+Running host_to_all_bidirectional_memcpy_ce.
+memcpy CE CPU(row) <-> GPU(column) bandwidth (GB/s)
+           0
+ 0     22.60
+
+SUM host_to_all_bidirectional_memcpy_ce 22.60
+COEFFICIENT_OF_VARIATION host_to_all_bidirectional_memcpy_ce 0.00
+
+Waived all_to_one_write_ce: no accessible peer GPU pairs (P2P not supported between any devices)
+Waived all_to_one_read_ce: no accessible peer GPU pairs (P2P not supported between any devices)
+Waived one_to_all_write_ce: no accessible peer GPU pairs (P2P not supported between any devices)
+Waived one_to_all_read_ce: no accessible peer GPU pairs (P2P not supported between any devices)
+Running host_to_device_memcpy_sm.
+memcpy SM CPU(row) -> GPU(column) bandwidth (GB/s)
+           0
+ 0     25.09
+
+SUM host_to_device_memcpy_sm 25.09
+COEFFICIENT_OF_VARIATION host_to_device_memcpy_sm 0.00
+
+Running device_to_host_memcpy_sm.
+memcpy SM CPU(row) <- GPU(column) bandwidth (GB/s)
+           0
+ 0     26.28
+
+SUM device_to_host_memcpy_sm 26.28
+COEFFICIENT_OF_VARIATION device_to_host_memcpy_sm 0.00
+
+Running host_to_device_bidirectional_memcpy_sm.
+memcpy SM CPU(row) <-> GPU(column) bandwidth (GB/s)
+           0
+ 0     22.58
+
+SUM host_to_device_bidirectional_memcpy_sm 22.58
+COEFFICIENT_OF_VARIATION host_to_device_bidirectional_memcpy_sm 0.00
+
+Running device_to_host_bidirectional_memcpy_sm.
+memcpy SM CPU(row) <-> GPU(column) bandwidth (GB/s)
+           0
+ 0     22.58
+
+SUM device_to_host_bidirectional_memcpy_sm 22.58
+COEFFICIENT_OF_VARIATION device_to_host_bidirectional_memcpy_sm 0.00
+
+Waived device_to_device_memcpy_read_sm: no accessible peer GPU pairs (P2P not supported between any devices)
+Waived device_to_device_memcpy_write_sm: no accessible peer GPU pairs (P2P not supported between any devices)
+Waived device_to_device_bidirectional_memcpy_read_sm: no accessible peer GPU pairs (P2P not supported between any devices)
+Waived device_to_device_bidirectional_memcpy_write_sm: no accessible peer GPU pairs (P2P not supported between any devices)
+Running all_to_host_memcpy_sm.
+memcpy SM CPU(row) <- GPU(column) bandwidth (GB/s)
+           0
+ 0     26.28
+
+SUM all_to_host_memcpy_sm 26.28
+COEFFICIENT_OF_VARIATION all_to_host_memcpy_sm 0.00
+
+Running all_to_host_bidirectional_memcpy_sm.
+memcpy SM CPU(row) <-> GPU(column) bandwidth (GB/s)
+           0
+ 0     22.59
+
+SUM all_to_host_bidirectional_memcpy_sm 22.59
+
+Running host_to_all_memcpy_sm.
+memcpy SM CPU(row) -> GPU(column) bandwidth (GB/s)
+           0
+ 0     25.10
+
+SUM host_to_all_memcpy_sm 25.10
+COEFFICIENT_OF_VARIATION host_to_all_memcpy_sm 0.00
+
+Running host_to_all_bidirectional_memcpy_sm.
+memcpy SM CPU(row) <-> GPU(column) bandwidth (GB/s)
+           0
+ 0     22.59
+
+SUM host_to_all_bidirectional_memcpy_sm 22.59
+
+Waived all_to_one_write_sm: no accessible peer GPU pairs (P2P not supported between any devices)
+Waived all_to_one_read_sm: no accessible peer GPU pairs (P2P not supported between any devices)
+Waived one_to_all_write_sm: no accessible peer GPU pairs (P2P not supported between any devices)
+Waived one_to_all_read_sm: no accessible peer GPU pairs (P2P not supported between any devices)
+Running host_device_latency_sm.
+memory latency SM CPU(row) <-> GPU(column) (ns)
+           0
+ 0    597.20
+
+SUM host_device_latency_sm 597.20
+
+Waived device_to_device_latency_sm: no accessible peer GPU pairs (P2P not supported between any devices)
+Waived device_to_device_memcpy_read_tma: no accessible peer GPU pairs (P2P not supported between any devices)
+Waived device_to_device_memcpy_write_tma: no accessible peer GPU pairs (P2P not supported between any devices)
+Waived device_to_device_bidirectional_memcpy_read_tma: no accessible peer GPU pairs (P2P not supported between any devices)
+Waived device_to_device_bidirectional_memcpy_write_tma: no accessible peer GPU pairs (P2P not supported between any devices)
+Running device_local_copy.
+memcpy CE local GPU(column) bandwidth (GB/s)
+           0
+ 0    470.91
+
+SUM device_local_copy 470.91
+
+Running device_local_copy_sm.
+memcpy SM local GPU(column) bandwidth (GB/s)
+           0
+ 0    455.94
+
+SUM device_local_copy_sm 455.94
+
+Running device_local_read_sm.
+memcpy SM local GPU(column) read-only bandwidth (GB/s)
+           0
+ 0    985.76
+
+SUM device_local_read_sm 985.76
+COEFFICIENT_OF_VARIATION device_local_read_sm 0.00
+
+Running device_local_write_sm.
+memcpy SM local GPU(column) write-only bandwidth (GB/s)
+           0
+ 0    886.66
+
+SUM device_local_write_sm 886.66
+COEFFICIENT_OF_VARIATION device_local_write_sm 0.01
+
+Waived device_to_device_latency_tma: no accessible peer GPU pairs (P2P not supported between any devices)
+Waived device_local_copy_tma: TMA requires compute capability 9.0+ (Hopper or later), device 0 has 8.x
+NOTE: The reported results may not reflect the full capabilities of the platform.
+Performance can vary with software drivers, hardware clocks, and system topology.
+
+
+=== 关键字段说明 ===
+PCIe H->D:        host_to_device_memcpy_ce
+PCIe D->H:        device_to_host_memcpy_ce
+显存内带宽:        device_local_copy
+
+⚠️ 不要和 gpu-burn 同时跑，会互相干扰结果

@@ -7,6 +7,38 @@
 `ongoing_project_related/llm-rl-experiments/训练方法论与实验记录.md`
 里的"实验：多卡训练/推理速度基准测试"一节。
 
+## 没有 GPU 时该做什么
+
+分两种情况：
+
+**1. 还没挂卡（故意的，省钱）**：直接跑 Step 1，不用等 GPU。
+
+```bash
+export DATA_DIR="/root/rivermind-data"
+bash install/step1_wo_gpu.sh   # 下载模型/数据集/JustRL代码 + 装python依赖 + flash-attn + nvcc，全程不碰GPU
+```
+
+顺手把 `python3-dev` 也装上（Step 2 的 Triton JIT 编译需要，同样不需要GPU）：
+
+```bash
+apt-get install -y python3-dev
+```
+
+跑完这些之后，Step 2/3 就等挂卡了再继续，不用现在等着。
+
+**2. 应该有卡但 GPU 不见了（实例重启/容器没挂载好）**：先确认是不是真的没有，
+再决定要不要继续：
+
+```bash
+nvidia-smi -L          # 没输出 = 看不到任何GPU
+ls /dev/nvidia*         # 报 "No such file or directory" = 设备节点没挂进这个容器
+cat /proc/driver/nvidia/version  # 这个有输出但上面两个没有 = 驱动模块在，只是设备没直通进来
+```
+
+如果是这种情况，是平台侧的问题（容器GPU直通没配置好/实例需要重新挂载显卡），
+不是脚本能修的，需要去租卡平台的控制台处理。**但 Step 1 不受影响，可以继续在
+这个状态下跑**——它本来就不需要GPU，等平台那边把GPU挂回来之后直接从 Step 2 开始。
+
 ## 三步流程
 
 | 步骤 | 需要GPU？ | 入口脚本 | 做什么 |

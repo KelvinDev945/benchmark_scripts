@@ -3,16 +3,20 @@
 #  Step 1 [wo GPU] —— 无卡（CPU）阶段入口。
 #  跑完直接挂卡，进入 Step 2。
 #
-#  并行策略（2026-07-21，含CUDA toolkit并入并行组）：
+#  并行策略（2026-08-03，clone_hardware_tools并入并行组）：
 #  - download_model / download_dataset / clone_justrl / install_python_deps /
-#    download_cuda_toolkit 这五个任务互相没有依赖（打在不同域名/CDN上：
-#    ModelScope、hf-mirror、GitHub(代理)、PyPI镜像、NVIDIA官方下载），并行拉起，
-#    哪个先下完就算哪个先完成，不用互相等待，缩短总耗时。
+#    download_cuda_toolkit / clone_hardware_tools 这六个任务互相没有依赖（打在
+#    不同域名/CDN上：ModelScope、hf-mirror、GitHub(代理)、PyPI镜像、NVIDIA官方
+#    下载），并行拉起，哪个先下完就算哪个先完成，不用互相等待，缩短总耗时。
 #    download_cuda_toolkit 原来默认跳过（flash-attn改用预编译wheel后不再需要
 #    nvcc），但 Step 3 的 hardware/run_gpu_burn.sh / run_nvbandwidth.sh 编译时
 #    仍然要用 nvcc——2026-07-21在fj02上因为没有提前装好，编译被迫拖到已经挂卡
 #    计费之后才做，浪费GPU计费时间。改成默认在 Step 1（无卡阶段）就装好，编译
 #    本身不需要真实GPU在场。
+#    clone_hardware_tools 同理——gpu-burn/nvbandwidth 的 git clone 本身也不需要
+#    GPU在场，之前一直放在 Step 3 的 hardware/*.sh 里"用到才clone"，2026-08-03
+#    改成提前在 Step 1 clone 好（只clone不编译，编译仍留在 Step 3，见下方脚本
+#    改动说明），省下挂卡后等clone的时间。
 #  - flash-attn 的安装（预编译wheel下载，找不到才退回源码编译）依赖
 #    torch 已经装好（要探测 torch 版本/ABI 才能拼出wheel文件名），
 #    所以必须等 install_python_deps 完成后再串行跑，不能提前并行。
@@ -31,11 +35,11 @@ mkdir -p "$LOG_DIR"
 echo "===== [0/2] bootstrap_uv.sh（同步，后面的并行任务都依赖它） ====="
 bash bootstrap_uv.sh
 
-echo "===== [1/2] 并行下载：download_model / download_dataset / clone_justrl / install_python_deps / download_cuda_toolkit ====="
-echo "      （五个任务互相独立，各自日志见 $LOG_DIR/*.log，谁先完成就算谁先完成）"
+echo "===== [1/2] 并行下载：download_model / download_dataset / clone_justrl / install_python_deps / download_cuda_toolkit / clone_hardware_tools ====="
+echo "      （六个任务互相独立，各自日志见 $LOG_DIR/*.log，谁先完成就算谁先完成）"
 
 declare -A PIDS
-for job in download_model download_dataset clone_justrl install_python_deps download_cuda_toolkit; do
+for job in download_model download_dataset clone_justrl install_python_deps download_cuda_toolkit clone_hardware_tools; do
     bash "${job}.sh" > "$LOG_DIR/${job}.log" 2>&1 &
     PIDS[$job]=$!
     echo "      启动 $job（pid=${PIDS[$job]}）"

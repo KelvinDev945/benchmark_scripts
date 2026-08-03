@@ -15,7 +15,7 @@
 
 ```bash
 export DATA_DIR="/root/rivermind-data"
-bash install/step1_wo_gpu.sh   # 下载模型/数据集/JustRL代码 + 装python依赖 + flash-attn + nvcc，全程不碰GPU
+bash install/step1_wo_gpu.sh   # 下载模型/数据集/JustRL代码 + 装python依赖 + flash-attn + nvcc + gpu-burn/nvbandwidth源码，全程不碰GPU
 ```
 
 顺手把 `python3-dev` 也装上（Step 2 的 Triton JIT 编译需要，同样不需要GPU）：
@@ -43,7 +43,7 @@ cat /proc/driver/nvidia/version  # 这个有输出但上面两个没有 = 驱动
 
 | 步骤 | 需要GPU？ | 入口脚本 | 做什么 |
 |---|---|---|---|
-| Step 1 | wo GPU | `install/step1_wo_gpu.sh` | 下载模型/数据集/JustRL代码 + 装torch(锁2.8.x)/transformers/vllm/unsloth等python依赖 + 装flash-attn(预编译wheel) |
+| Step 1 | wo GPU | `install/step1_wo_gpu.sh` | 下载模型/数据集/JustRL代码 + 装torch(锁2.8.x)/transformers/vllm/unsloth等python依赖 + 装flash-attn(预编译wheel) + clone gpu-burn/nvbandwidth源码 |
 | Step 2 | with GPU | `install/step2_with_gpu.sh` | 快速验证模型能加载+LoRA能包装 |
 | Step 3 | with GPU | `hardware/*.sh` + `workload/*.py` | 正式基准测试：硬件跑分 + GRPO训练/推理耗时+显存+吞吐 |
 
@@ -66,6 +66,13 @@ CPU时间，所以必须走预编译wheel这条路。
 `INSTALL_CUDA_TOOLKIT=0` 可显式关闭）。版本号（默认12.8.0）跟 `install_python_deps.sh`
 锁定的 torch cu128 保持一致，改torch版本时要联动改这里。
 
+**gpu-burn/nvbandwidth 的源码也在 Step 1 里提前 clone 好**（`install/clone_hardware_tools.sh`）——
+这两个工具本来在 Step 3 的 `hardware/run_gpu_burn.sh`/`run_nvbandwidth.sh` 里"用到才clone"，
+但 git clone 本身不需要GPU在场，跟 CUDA Toolkit 同样的道理提前挪到 Step 1 做，省下挂卡后等
+clone（尤其GitHub直连慢时）的时间。**只clone不编译**——编译依赖 nvcc，且两个脚本已经改成
+分别判断"目录是否存在"（决定要不要clone）和"二进制是否存在"（决定要不要编译），Step 1 提前
+clone 之后，Step 3 首次运行时会跳过clone、只做编译，不会重复work。
+
 Step 2 因此只剩一件事——真正需要GPU硬件在场的模型加载验证。
 
 ## ⚠️ 数据保存位置：`/root/rivermind-data`
@@ -82,13 +89,15 @@ Step 2 因此只剩一件事——真正需要GPU硬件在场的模型加载验�
 benchmark_scripts/
 ├── install/
 │   ├── sources.sh                   # 统一分发源配置(PyPI镜像/HF_ENDPOINT/GitHub代理/ModelScope优先/CUDA_HOME自动探测/uv装到数据盘)，被其他脚本source
-│   ├── step1_wo_gpu.sh               # [wo GPU] 入口：先同步跑bootstrap_uv，再并行拉起5个独立任务，最后串行跑flash-attn
+│   ├── step1_wo_gpu.sh               # [wo GPU] 入口：先同步跑bootstrap_uv，再并行拉起6个独立任务，最后串行跑flash-attn
 │   │   ├── bootstrap_uv.sh           #   （同步，最先跑）装uv+modelscope+huggingface_hub，避免并行任务互相踩踏装uv
 │   │   ├── download_model.sh         #   ┐
-│   │   ├── download_dataset.sh       #   │ 五个任务互相独立，并行拉起，谁先完成
-│   │   ├── clone_justrl.sh           #   │ 就算谁先完成（打在不同域名/CDN上）
-│   │   ├── install_python_deps.sh    #   │ 装torch(锁2.8.x)/transformers/vllm/unsloth等（flash-attn除外）
-│   │   ├── download_cuda_toolkit.sh  #   ┘ 下载+装nvcc到持久化数据盘（默认装，Step3编译gpu-burn/nvbandwidth要用）
+│   │   ├── download_dataset.sh       #   │
+│   │   ├── clone_justrl.sh           #   │ 六个任务互相独立，并行拉起，谁先完成
+│   │   ├── install_python_deps.sh    #   │ 就算谁先完成（打在不同域名/CDN上）
+│   │   ├── download_cuda_toolkit.sh  #   │ 装torch(锁2.8.x)/transformers/vllm/unsloth等（flash-attn除外）
+│   │   ├── clone_hardware_tools.sh   #   ┘ 下载+装nvcc到持久化数据盘（默认装，Step3编译gpu-burn/nvbandwidth要用）
+│   │   │                             #     提前clone gpu-burn/nvbandwidth源码（只clone不编译，编译留在Step3）
 │   │   └── install_flash_attn.sh     #   （串行，依赖install_python_deps）预编译wheel+断点续传+多源重试，不退回源码编译
 │   │   └── download_data_and_code.sh #   串行兼容入口（=bootstrap_uv+download_model+download_dataset+clone_justrl依次跑），单独用时保留
 │   └── step2_with_gpu.sh             # [with GPU] 入口：只做真正需要GPU在场的事

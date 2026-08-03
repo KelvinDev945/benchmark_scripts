@@ -19,7 +19,7 @@ mkdir -p "$RESULTS_DIR" "$(dirname "$GPUBURN_DIR")"
 DURATION="${1:-180}"
 
 if [ ! -d "$GPUBURN_DIR" ]; then
-    echo "=== clone + 编译 gpu-burn（存到持久化数据盘: $GPUBURN_DIR） ==="
+    echo "=== clone gpu-burn（存到持久化数据盘: $GPUBURN_DIR） ==="
     # 先测GitHub直连，不通则走代理（每台实例网络环境不一样，不能假设一致——
     # 2026-07-21在fj02上实测：直连超时130秒才失败，且这里之前没有代理兜底，
     # 导致 set -e 直接中断整个脚本，压测根本没跑起来）
@@ -29,6 +29,14 @@ if [ ! -d "$GPUBURN_DIR" ]; then
         GITHUB_PREFIX="$GITHUB_PROXY_PREFIX"
     fi
     git clone "${GITHUB_PREFIX}https://github.com/wilicc/gpu-burn.git" "$GPUBURN_DIR"
+fi
+
+# 目录存在不代表编译过——Step 1 的 clone_hardware_tools.sh 可能已经提前把源码
+# clone 好了（那一步只clone不编译，见该脚本注释），这里单独判断二进制是否存在，
+# 不能像旧版那样把clone和编译并到同一个"目录存在就跳过"判断里，否则会连编译也
+# 一起跳过导致 ./gpu_burn 找不到（2026-08-03修复）
+if [ ! -f "$GPUBURN_DIR/gpu_burn" ]; then
+    echo "=== 编译 gpu-burn ==="
     # gpu-burn 的 Makefile 只认 /usr 或 /usr/local/cuda 这两个硬编码路径找nvcc，
     # 不认 CUDA_HOME/PATH，必须显式传 CUDAPATH 变量给make，否则INCLUDE路径是空的
     # （拼出 -I/include 这种错误路径，实测报 cublas_v2.h 找不到）

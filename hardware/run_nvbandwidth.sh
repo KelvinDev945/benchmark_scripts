@@ -19,7 +19,7 @@ echo "=== 安装依赖 ==="
 apt update && apt install -y libboost-program-options-dev cmake
 
 if [ ! -d "$NVBW_DIR" ]; then
-    echo "=== clone + 编译 nvbandwidth ==="
+    echo "=== clone nvbandwidth ==="
     # 先测GitHub直连，不通则走代理（每台实例网络环境不一样，不能假设一致——
     # 2026-07-21在fj02上实测：run_gpu_burn.sh的直连clone超时130秒才失败且无兜底，
     # 导致 set -e 直接中断整个脚本，这里同样补上代理容错）
@@ -29,6 +29,14 @@ if [ ! -d "$NVBW_DIR" ]; then
         GITHUB_PREFIX="$GITHUB_PROXY_PREFIX"
     fi
     git clone "${GITHUB_PREFIX}https://github.com/NVIDIA/nvbandwidth.git" "$NVBW_DIR"
+fi
+
+# 目录存在不代表编译过——Step 1 的 clone_hardware_tools.sh 可能已经提前把源码
+# clone 好了（那一步只clone不编译，见该脚本注释），这里单独判断二进制是否存在，
+# 不能像旧版那样把clone和编译并到同一个"目录存在就跳过"判断里，否则会连编译也
+# 一起跳过导致 ./nvbandwidth 找不到（2026-08-03修复）
+if [ ! -f "$NVBW_DIR/build/nvbandwidth" ]; then
+    echo "=== 编译 nvbandwidth ==="
     mkdir -p "$NVBW_DIR/build"
     (cd "$NVBW_DIR/build" && cmake .. -DCMAKE_CUDA_COMPILER="$(command -v nvcc)" && make -j4)
 fi
